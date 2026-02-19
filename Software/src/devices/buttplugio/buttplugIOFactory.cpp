@@ -72,10 +72,8 @@ Device* ButtplugIODeviceFactory(
             continue;
         }
 
-        // TODO: Create appropriate device type based on characteristics
-        // For now, defaulting to LovenseDevice as before
-        return new LovenseDevice(advertisedDevice, configFileName,
-                                 characteristics);
+        return new GenericButtplugIODevice(advertisedDevice, configFileName,
+                                            characteristics);
     }
 
     ESP_LOGW("BUTTPLUGIO", "No matching configuration found for device: %s",

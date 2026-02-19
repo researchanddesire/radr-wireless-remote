@@ -105,7 +105,21 @@ When a device with a registered service UUID is discovered:
    - Loads and parses the JSON configuration
    - Matches the advertised device name against `communication[0].btle.names` patterns
    - Extracts TX/RX characteristics for the service UUID
-4. Creates a `LovenseDevice` instance with the matched configuration
+4. Creates a `GenericButtplugIODevice` instance with the matched configuration
+
+### Feature Discovery
+
+On connection, the generic device parses output features from the spec file and builds a UI dynamically:
+
+| Feature Type | Description | Value Format |
+|-------------|-------------|--------------|
+| `vibrate` | Vibration intensity | `[min, max]` (e.g., `[0, 20]`) |
+| `rotate` | Rotation speed (can be bidirectional) | `[min, max]` (e.g., `[-20, 20]`) |
+| `oscillate` | Oscillation/thrusting speed | `[min, max]` (e.g., `[0, 100]`) |
+| `constrict` | Constriction/pump intensity | `[min, max]` (e.g., `[0, 3]`) |
+| `position_with_duration` | Position with timing | `position: [min, max]`, `duration: [min, max]` |
+
+Each output feature becomes a controllable parameter displayed as a horizontal bar chart on screen. The left encoder controls the currently focused feature, and shoulder buttons cycle between features.
 
 ### Protocol Spec File Format
 
@@ -255,6 +269,8 @@ The planned workflow for production devices:
 | `src/devices/registry.h` | Registry interface and type definitions |
 | `src/devices/registry.cpp` | Registry implementation and initialization |
 | `src/devices/buttplugio/buttplugIOFactory.cpp` | Dynamic device factory |
+| `src/devices/buttplugio/GenericButtplugIODevice.hpp` | Generic device with dynamic UI |
+| `src/devices/buttplugio/buttplugIOProtocol.hpp` | Protocol base class and feature parsing |
 | `src/devices/device.h` | Base device class |
 | `data/registry.json` | Service UUID to spec file mappings |
 | `data/protocols/*.json` | Buttplug.io v4 device specifications |
@@ -262,6 +278,14 @@ The planned workflow for production devices:
 ## Further Reading
 
 <CardGroup cols={2}>
+<Card title="Display Library" icon="display" href="/radr/Software/display-library/introduction">
+How UI components are rendered and updated on screen.
+</Card>
+
+<Card title="Input & Event Binding" icon="gamepad" href="/radr/Software/event-binding/introduction">
+How hardware inputs map to device controls.
+</Card>
+
 <Card title="BLE Communication" icon="bluetooth" href="/radr/Software/communication/ble">
 Bluetooth protocol details and connection handling.
 </Card>

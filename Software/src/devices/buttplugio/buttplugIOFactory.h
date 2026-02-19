@@ -7,7 +7,7 @@
 #include <regex>
 
 #include "../device.h"
-#include "../lovense/LovenseDevice.hpp"
+#include "GenericButtplugIODevice.hpp"
 
 /// @brief A device factory for devices that use the ButtplugIO protocol.
 /// @param advertisedDevice The advertised BLE device to create a device for

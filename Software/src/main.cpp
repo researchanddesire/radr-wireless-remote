@@ -106,20 +106,20 @@ void setup() {
     setupAnimatedIcons();
     setupIdleMonitor();
 
-    xTaskCreatePinnedToCore(
-        [](void *pvParameters) {
-            while (true) {
-                vTaskDelay(10);
-                leftShoulderBtn.tick();
-                rightShoulderBtn.tick();
-                underLeftBtn.tick();
-                underCenterBtn.tick();
-                underRightBtn.tick();
-                wm.process();
-            }
-        },
-        "buttonTask", 6 * configMINIMAL_STACK_SIZE, NULL,
-        configMAX_PRIORITIES - 1, NULL, 0);
+    // xTaskCreatePinnedToCore(
+    //     [](void *pvParameters) {
+    //         while (true) {
+    //             vTaskDelay(10);
+    //             leftShoulderBtn.tick();
+    //             rightShoulderBtn.tick();
+    //             underLeftBtn.tick();
+    //             underCenterBtn.tick();
+    //             underRightBtn.tick();
+    //             wm.process();
+    //         }
+    //     },
+    //     "buttonTask", 6 * configMINIMAL_STACK_SIZE, NULL,
+    //     configMAX_PRIORITIES - 1, NULL, 0);
 }
 
 void loop() {

@@ -321,8 +321,8 @@ static void setupAnimatedIcons() {
         }
     };
 
-    xTaskCreatePinnedToCore(task, "draw_icons", 4 * configMINIMAL_STACK_SIZE,
-                            nullptr, tskIDLE_PRIORITY, nullptr, 0);
+    // xTaskCreatePinnedToCore(task, "draw_icons", 4 * configMINIMAL_STACK_SIZE,
+    //                         nullptr, tskIDLE_PRIORITY, nullptr, 0);
 }
 
 #endif  // LOCKBOX_ANIMATEDICONS_H

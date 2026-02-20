@@ -89,7 +89,7 @@ void Device::connectionTask(void *pvParameter) {
                 /**
                  *  We don't already have a client that knows this device,
                  *  check for a client that is disconnected that we can use.
-                 *  
+                 *
                  *  NOTE: Reusing disconnected clients for DIFFERENT devices
                  *  can cause connection issues. Delete stale clients instead
                  *  and create a fresh one for reliable connections.
@@ -99,7 +99,9 @@ void Device::connectionTask(void *pvParameter) {
                          "disconnected client slot");
                 pClient = NimBLEDevice::getDisconnectedClient();
                 if (pClient) {
-                    ESP_LOGD(TAG, "Found disconnected client, deleting it to create fresh connection");
+                    ESP_LOGD(TAG,
+                             "Found disconnected client, deleting it to create "
+                             "fresh connection");
                     NimBLEDevice::deleteClient(pClient);
                     pClient = nullptr;  // Will create new client below
                 } else {
@@ -241,9 +243,9 @@ void Device::connectionTask(void *pvParameter) {
 }
 
 void Device::startConnectionTask() {
-    xTaskCreatePinnedToCore(Device::connectionTask, "connectionTask",
-                            10 * configMINIMAL_STACK_SIZE, this, 1,
-                            &connectionTaskHandle, 0);
+    // xTaskCreatePinnedToCore(Device::connectionTask, "connectionTask",
+    //                         10 * configMINIMAL_STACK_SIZE, this, 1,
+    //                         &connectionTaskHandle, 0);
 }
 
 void Device::onConnect(NimBLEClient *pClient) {

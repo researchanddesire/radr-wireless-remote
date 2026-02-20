@@ -63,13 +63,13 @@ void initBuzzer() {
     digitalWrite(pins::BUZZER_PIN, LOW);
     playBuzzerPattern(BuzzerPattern::BOOT);
 
-    xTaskCreatePinnedToCore(buzzerTask,                    // Task function
-                            "BuzzerTask",                  // Task name
-                            3 * configMINIMAL_STACK_SIZE,  // Stack size
-                            nullptr,                       // Parameter
-                            1,                             // Priority
-                            &buzzerTaskHandle,             // Task handle
-                            0);
+    // xTaskCreatePinnedToCore(buzzerTask,                    // Task function
+    //                         "BuzzerTask",                  // Task name
+    //                         3 * configMINIMAL_STACK_SIZE,  // Stack size
+    //                         nullptr,                       // Parameter
+    //                         1,                             // Priority
+    //                         &buzzerTaskHandle,             // Task handle
+    //                         0);
 }
 
 void playBuzzerPattern(BuzzerPattern pattern) { currentPattern = pattern; }

@@ -7,6 +7,7 @@
 #include <regex>
 
 #include "../device.h"
+#include "../lovense/LovenseGeneric.hpp"
 #include "GenericButtplugIODevice.hpp"
 
 /// @brief A device factory for devices that use the ButtplugIO protocol.

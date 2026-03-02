@@ -196,7 +196,7 @@ class GenericButtplugIODevice : public Device, public ButtplugIoProtocol {
         sendAllFeatures(true);
     }
 
-  private:
+  protected:
     void initFeatureValues() {
         const auto &feats = getFeatures();
         featureValues.resize(feats.size(), 0);
@@ -225,7 +225,7 @@ class GenericButtplugIODevice : public Device, public ButtplugIoProtocol {
         }
     }
 
-    void sendFeature(int idx) {
+    virtual void sendFeature(int idx) {
         const auto &feats = getFeatures();
         if (idx >= (int)feats.size()) return;
         if (idx >= (int)featureValues.size()) return;
@@ -248,7 +248,7 @@ class GenericButtplugIODevice : public Device, public ButtplugIoProtocol {
         send("tx", cmd.c_str());
     }
 
-    void sendAllFeatures(bool setToMin) {
+    virtual void sendAllFeatures(bool setToMin) {
         const auto &feats = getFeatures();
         for (size_t i = 0; i < feats.size() && i < featureValues.size(); i++) {
             if (setToMin) {

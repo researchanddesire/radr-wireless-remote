@@ -72,6 +72,12 @@ Device* ButtplugIODeviceFactory(
             continue;
         }
 
+        if (configFileName == "/protocols/lovense.json" ||
+            configFileName == "/protocols/lovense-connect-service.json") {
+            return new LovenseGeneric(advertisedDevice, configFileName,
+                                      characteristics);
+        }
+
         return new GenericButtplugIODevice(advertisedDevice, configFileName,
                                             characteristics);
     }

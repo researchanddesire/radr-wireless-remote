@@ -4,8 +4,6 @@
 #include <ArduinoJson.h>
 
 #include "buttplugio/buttplugIOFactory.h"
-#include "lovense/LovenseDevice.hpp"
-#include "lovense/domi/domi_device.hpp"
 #include "registry_data.h"
 #include "researchAndDesire/ossm/ossm_device.hpp"
 #include "serviceUUIDs.h"
@@ -34,11 +32,16 @@ void initRegistry() {
             return new OSSM(advertisedDevice);
         });
 
-    explicitRegistry.emplace(
-        DOMI_SERVICE_ID,
-        [](const NimBLEAdvertisedDevice *advertisedDevice) -> Device * {
-            return new Domi2(advertisedDevice);
-        });
+    // Domi 2 previously had an explicit factory here. It now goes through
+    // the generic ButtplugIO path and gets a LovenseGeneric instance, which
+    // supports all Lovense control modes. To re-add a device-specific override:
+    //
+    // #include "lovense/domi/domi_device.hpp"
+    // explicitRegistry.emplace(
+    //     DOMI_SERVICE_ID,
+    //     [](const NimBLEAdvertisedDevice *advertisedDevice) -> Device * {
+    //         return new Domi2(advertisedDevice);
+    //     });
 
     // Parse embedded registry (no file I/O)
     DeserializationError error = deserializeJson(registryDoc, REGISTRY_JSON);

@@ -31,7 +31,7 @@ class OSSM : public Device {
     SettingPercents settings;
     int rightFocusedIndex = 0;
     int leftFocusedIndex = 0;
-    std::string patternName = DEFAULT_OSSM_PATTERN_NAME;
+    std::string patternName = ui::strings::DEFAULT_OSSM_PATTERN_NAME;
     bool isFirstConnect = true;
 
     // Reference to the pattern name display component for color control
@@ -436,7 +436,7 @@ class OSSM : public Device {
     bool setPattern(int pattern) {
         if (menu.empty()) {
             ESP_LOGW(TAG, "setPattern called but menu is empty");
-            patternName = EMPTY_STRING;
+            patternName = ui::strings::EMPTY_STRING;
             return false;
         }
         if (pattern == static_cast<int>(settings.pattern)) {

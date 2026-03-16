@@ -1,0 +1,278 @@
+---
+title: "Input & Event Binding"
+description: "How RADR maps hardware inputs to device controls and UI updates"
+sidebarTitle: "Input & Events"
+---
+
+RADR has six physical buttons and two rotary encoders. Each input is mapped to device behavior through virtual method dispatch — devices override the methods they care about and ignore the rest.
+
+## Hardware Inputs
+
+```
+┌──────────────────────────────────────────────────┐
+│           RADR Wireless Remote                   │
+│                                                  │
+│  [L Shoulder]                    [R Shoulder]    │
+│                                                  │
+│     (Left Encoder)        (Right Encoder)        │
+│                                                  │
+│                  [ Display ]                     │
+│                                                  │
+│  [Under L]     [Under Center]     [Under R]      │
+└──────────────────────────────────────────────────┘
+```
+
+| Input | Pin | Type | Typical Use |
+|-------|-----|------|-------------|
+| Left Shoulder | `BTN_L_SHOULDER` | Momentary button | Cycle parameter backward |
+| Right Shoulder | `BTN_R_SHOULDER` | Momentary button | Cycle parameter forward |
+| Under Left | `BTN_UNDER_L` | Momentary button | Back / Menu |
+| Under Center | `BTN_UNDER_C` | Momentary button | Pause / Stop (double-press) |
+| Under Right | `BTN_UNDER_R` | Momentary button | Select / Confirm |
+| Left Encoder | Rotary + ISR | Continuous rotation | Primary value control (speed, intensity) |
+| Right Encoder | Rotary + ISR | Continuous rotation | Secondary value control (depth, sensation) |
+
+## Input Processing Architecture
+
+Inputs are processed through two separate systems that run on different FreeRTOS tasks:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Button Task (Core 0)                                        │
+│                                                             │
+│  OneButton library polls all 5 buttons at 10ms intervals    │
+│  Click events → State machine events                        │
+│  (under buttons trigger state transitions)                  │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ Controller Task (Core 1)                                    │
+│                                                             │
+│  Runs at ~60fps while in device_draw_control state          │
+│  Polls shoulder buttons → device->onLeftBumperClick()       │
+│  Reads left encoder   → device->onLeftEncoderChange(val)    │
+│  Reads right encoder  → device->onRightEncoderChange(val)   │
+│  Ticks all display objects                                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+The under buttons (left, center, right) are handled by the button task and fire state machine events for navigation. The shoulder buttons and encoders are polled directly by the controller task and dispatch to device virtual methods.
+
+## Device Virtual Methods
+
+Every device inherits empty implementations of these methods from the `Device` base class. Override only what your device needs:
+
+```cpp
+class Device {
+public:
+    virtual void onLeftBumperClick() {}
+    virtual void onRightBumperClick() {}
+    virtual void onLeftButtonClick() {}
+    virtual void onRightButtonClick() {}
+    virtual void onLeftEncoderChange(int value) {}
+    virtual void onRightEncoderChange(int value) {}
+
+    virtual void onConnect() {}
+    virtual void onDisconnect() {}
+    virtual void onPause(bool fullStop = false) {}
+    virtual void onResume() {}
+    virtual void onExit() {}
+
+    virtual void drawControls() {}
+};
+```
+
+### Input Dispatch Table
+
+| Hardware Input | Controller Task Action | Device Method |
+|----------------|----------------------|---------------|
+| Left Shoulder (falling edge) | `digitalRead()` detects LOW | `onLeftBumperClick()` |
+| Right Shoulder (falling edge) | `digitalRead()` detects LOW | `onRightBumperClick()` |
+| Left Encoder (value changed) | `leftEncoder.readEncoder()` | `onLeftEncoderChange(int)` |
+| Right Encoder (value changed) | `rightEncoder.readEncoder()` | `onRightEncoderChange(int)` |
+| Under Left | Button task, OneButton | State machine: `left_button_pressed` |
+| Under Center (single) | Button task, OneButton | State machine: `middle_button_pressed` (pause) |
+| Under Center (double) | Button task, OneButton | State machine: `middle_button_second_press` (stop) |
+| Under Right | Button task, OneButton | State machine: `right_button_pressed` |
+
+## Variable Binding Pattern
+
+RADR doesn't use a formal data-binding framework. Instead, display components hold pointers to device member variables, and encoder callbacks write directly to those variables. The display component's `shouldDraw()` detects when the pointed-to value changes and triggers a redraw.
+
+### The Flow
+
+```
+┌──────────┐     ┌──────────────────┐     ┌────────────────┐     ┌────────────┐
+│ Encoder  │────▶│ Device callback  │────▶│ Updates float  │────▶│ Component  │
+│ rotates  │     │ onLeftEncoder    │     │ member var     │     │ shouldDraw │
+│          │     │ Change(value)    │     │ *valuePtr = N  │     │ sees change│
+└──────────┘     └──────────────────┘     └────────────────┘     └────────────┘
+                                                                       │
+                                                                       ▼
+                                                                 ┌────────────┐
+                                                                 │   draw()   │
+                                                                 │ renders    │
+                                                                 │ new value  │
+                                                                 └────────────┘
+```
+
+1. User turns the left encoder
+2. Controller task reads the new value and calls `device->onLeftEncoderChange(42)`
+3. The device stores the value: `this->vibrateIntensity = 42`
+4. The device sends the BLE command: `send("tx", "Vibrate:42;")`
+5. On the next `tick()`, the `BarChart` component's `shouldDraw()` dereferences its `float *value` pointer, sees `42 != lastDrawnValue`, and returns `true`
+6. `draw()` renders the updated bar
+
+### Example: OSSM Device
+
+The OSSM uses both encoders for different parameters:
+
+```cpp
+void drawControls() override {
+    // Left encoder controls speed (0-100)
+    leftEncoder.setBoundaries(0, 100);
+
+    // Right encoder controls one of: depth, sensation, stroke
+    rightEncoder.setBoundaries(0, 100);
+
+    // EncoderDial component holds pointers to settings members
+    std::map<String, float *> rightParams = {
+        {"Depth",     &this->settings.depth},
+        {"Sensation", &this->settings.sensation},
+        {"Stroke",    &this->settings.stroke}
+    };
+
+    draw<EncoderDial>(EncoderDial::Props{
+        .encoder = &rightEncoder,
+        .parameters = rightParams,
+        .focusedIndex = &this->rightFocusedIndex
+    });
+}
+
+// Shoulder buttons cycle which parameter the right encoder controls
+void onRightBumperClick() override {
+    rightFocusedIndex = (rightFocusedIndex + 1) % 3;
+    syncRightEncoder();
+    updateTabAppearance();
+}
+```
+
+### Example: Generic ButtplugIO Device
+
+The generic device dynamically creates bar charts for each output feature:
+
+```cpp
+void drawControls() override {
+    const auto &feats = getFeatures();
+
+    for (int i = 0; i < numFeatures; i++) {
+        draw<BarChart>(
+            feats[i].name.c_str(),
+            &featureValues[i],     // pointer to float — the binding
+            feats[i].minValue,
+            feats[i].maxValue,
+            barX, yPos, barWidth, barHeight,
+            i == focusedIndex
+        );
+    }
+}
+
+void onLeftEncoderChange(int value) override {
+    featureValues[focusedIndex] = value;
+    sendFeature(focusedIndex);  // BLE command
+}
+
+void onLeftBumperClick() override {
+    focusedIndex = (focusedIndex + n - 1) % n;
+    syncEncoder();       // Update encoder boundaries for new feature
+    updateBarFocus();    // Highlight the active bar
+}
+```
+
+## Encoder Configuration
+
+Encoders are configured per-device in `drawControls()`. The encoder boundaries and acceleration determine the feel of the control.
+
+```cpp
+leftEncoder.setBoundaries(0, 100);     // Value range
+leftEncoder.setAcceleration(50);        // 0 = linear, >0 = faster with speed
+leftEncoder.setEncoderValue(current);   // Set initial position
+```
+
+| Method | Purpose |
+|--------|---------|
+| `setBoundaries(min, max)` | Sets the encoder's value range |
+| `setAcceleration(amount)` | Higher = faster value changes with faster turning. 0 = disabled |
+| `setEncoderValue(value)` | Syncs the encoder to a specific position |
+| `readEncoder()` | Returns the current integer value |
+
+When switching which parameter an encoder controls (e.g., shoulder button press), you must call `setBoundaries()` and `setEncoderValue()` to sync the encoder to the new parameter's range and current value.
+
+## Persistent Left Encoder Monitoring
+
+Some devices need the left encoder to remain active even when the UI is in a menu or other non-control state. This is critical for safety — for example, the OSSM speed knob must always be responsive.
+
+```cpp
+virtual bool needsPersistentLeftEncoderMonitoring() const { return false; }
+virtual int getCurrentLeftEncoderValue() const { return 0; }
+virtual const char *getLeftEncoderParameterName() const { return "Value"; }
+```
+
+When a device returns `true` from `needsPersistentLeftEncoderMonitoring()`:
+
+1. The controller task skips left encoder polling (to avoid double-reads)
+2. A dedicated `leftEncoderMonitor` FreeRTOS task handles it instead
+3. This task runs at ~60fps and calls `device->onLeftEncoderChange()` on changes
+4. It stays active during `device_draw_control` and `device_menu` states
+
+<Warning>
+If your device has safety-critical controls that must respond at all times (not just during the control screen), override `needsPersistentLeftEncoderMonitoring()` to return `true`.
+</Warning>
+
+## State Machine Integration
+
+The under buttons don't dispatch to device methods directly — they fire state machine events that drive screen transitions:
+
+```
+device_draw_control
+    │
+    ├── middle_button_pressed → pause action (calls device->onPause())
+    ├── middle_button_second_press → device_stop state
+    ├── left_button_pressed → device_menu (if menu exists)
+    ├── right_button_pressed → device_menu (if menu exists)
+    └── disconnected_event → main_menu
+```
+
+The state machine calls device lifecycle methods at key transitions:
+
+| Transition | Device Method Called |
+|-----------|-------------------|
+| Connection established | `onConnect()` |
+| Enter control screen | `drawControls()` |
+| Center button pressed | `onPause()` |
+| Resume from stop | `onResume()` |
+| Disconnect | `onDisconnect()` |
+| Leave device | `onExit()` |
+
+## Key Source Files
+
+| File | Purpose |
+|------|---------|
+| `src/pages/controller.cpp` | Controller task — input polling and display ticking |
+| `src/services/encoder.h` | Encoder instances and interrupt setup |
+| `src/main.cpp` | Button initialization and OneButton event wiring |
+| `src/devices/device.h` | Base device class with virtual input methods |
+| `src/state/remote.h` | State machine definition and transitions |
+| `src/services/leftEncoderMonitor.cpp` | Persistent left encoder monitoring task |
+
+## Further Reading
+
+<CardGroup cols={2}>
+<Card title="Display Library" icon="display" href="/radr/Software/display-library/introduction">
+Component rendering, lifecycle, and canvas patterns.
+</Card>
+
+<Card title="Device Registry" icon="database" href="/radr/Software/device-registry/introduction">
+How devices are discovered and instantiated.
+</Card>
+</CardGroup>

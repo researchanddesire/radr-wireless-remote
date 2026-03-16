@@ -10,14 +10,11 @@
 #include <constants/Sizes.h>
 #include <qrcode.h>
 
-// Draw the vertical scrollbar for menus
 void drawScrollBar(int currentOption, int numOptions);
 void clearPage(bool clearStatusbar = false);
 
 struct DrawQRCodeProps {
-    // right aligned.
     int x = Display::WIDTH;
-    // top aligned.
     int y = Display::PageY;
 
     int maxWidth = Display::WIDTH;

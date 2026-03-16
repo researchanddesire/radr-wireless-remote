@@ -2,7 +2,6 @@
 #define GENERIC_PAGES_H
 
 #include "constants/Sizes.h"
-#include "constants/Strings.h"
 #include "pages/TextPages.h"
 
 void drawPageTask(void *pvParameters);

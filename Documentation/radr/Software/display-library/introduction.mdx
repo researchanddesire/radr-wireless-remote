@@ -1,0 +1,261 @@
+---
+title: "Display Library"
+description: "How RADR renders UI components on the TFT display"
+sidebarTitle: "Display Library"
+---
+
+RADR uses a component-based display system built on Adafruit GFX and a 320x240 ST7789 TFT. Each UI element is a `DisplayObject` subclass that manages its own drawing lifecycle, with thread-safe access via a FreeRTOS mutex.
+
+## Screen Layout
+
+The 320x240 display is divided into fixed regions:
+
+```
+┌──────────────────────────────────────┐ y=0
+│           Status Bar (30px)          │
+│  [WiFi] [Battery] [BLE]             │
+├──────────────────────────────────────┤ y=30 (PageY)
+│                                      │
+│           Page Area (210px)          │
+│                                      │
+│   Device controls, menus, etc.       │
+│                                      │
+└──────────────────────────────────────┘ y=240
+```
+
+| Region | Y Position | Height | Purpose |
+|--------|-----------|--------|---------|
+| Status Bar | 0 | 30px | WiFi, battery, BLE icons |
+| Page Area | 30px | 210px | Active content area |
+
+Key constants from `constants/Sizes.h`:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `Display::WIDTH` | 320 | Screen width in pixels |
+| `Display::HEIGHT` | 240 | Screen height in pixels |
+| `Display::StatusbarHeight` | 30 | Status bar height |
+| `Display::PageY` | 30 | Top of page area |
+| `Display::PageHeight` | 210 | Available page height |
+
+## DisplayObject Base Class
+
+Every UI component inherits from `DisplayObject`, which provides position, size, and a draw lifecycle.
+
+```cpp
+class DisplayObject {
+protected:
+    int16_t x, y;
+    int16_t width, height;
+    bool isDirty = false;
+    long lastDrawTime = 0;
+
+public:
+    bool isFirstDraw = true;
+
+    virtual bool shouldDraw();  // Override to control when redraws happen
+    virtual void draw() = 0;   // Implement to render the component
+    void tick();                // Called each frame by the controller
+};
+```
+
+### The Tick/Draw Lifecycle
+
+The controller task calls `tick()` on every display object each frame (~60fps). The lifecycle works as follows:
+
+```
+┌───────────┐     ┌──────────────┐     ┌──────────┐     ┌───────────┐
+│  tick()   │────▶│ shouldDraw() │────▶│ isDirty? │────▶│  draw()   │
+│  called   │     │  returns T/F │     │  yes/no  │     │  renders  │
+└───────────┘     └──────────────┘     └──────────┘     └───────────┘
+                                            │
+                                         no ▼
+                                       (skip frame)
+```
+
+1. `tick()` calls `shouldDraw()` to check if a redraw is needed
+2. If `shouldDraw()` returns `true`, sets `isDirty = true`
+3. If `isDirty`, calls `draw()` to render the component
+4. After drawing, resets `isDirty = false` and updates `lastDrawTime`
+
+The default `shouldDraw()` returns `true` on first draw or every 2 seconds. Components override this for finer control — for example, `TextButton` redraws when the button state, text, or colors change.
+
+## Thread Safety
+
+All TFT writes must be protected by `displayMutex`. Multiple FreeRTOS tasks may attempt to draw simultaneously (controller task, status bar task, etc.), so every `draw()` implementation must acquire the mutex before touching the display.
+
+```cpp
+void draw() override {
+    if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        // Safe to draw here
+        tft.fillRect(x, y, width, height, ST77XX_BLACK);
+        tft.setCursor(x, y);
+        tft.print("Hello");
+
+        xSemaphoreGive(displayMutex);
+    }
+}
+```
+
+<Warning>
+Drawing to `tft` without holding `displayMutex` will cause visual tearing and race conditions. Always acquire the mutex first, and keep the critical section short.
+</Warning>
+
+## Canvas-First Rendering
+
+For complex components, RADR uses off-screen canvas rendering to eliminate flicker. Instead of drawing directly to the TFT (which shows partial updates), components render to a `GFXcanvas16` buffer first, then push the completed frame in a single operation.
+
+```cpp
+GFXcanvas16 *canvas = new GFXcanvas16(width, height);
+canvas->fillScreen(ST77XX_BLACK);
+canvas->drawRoundRect(0, 0, width, height, 5, ST77XX_WHITE);
+canvas->setCursor(10, 20);
+canvas->print("Label");
+
+if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+    tft.drawRGBBitmap(x, y, canvas->getBuffer(), width, height);
+    xSemaphoreGive(displayMutex);
+}
+delete canvas;
+```
+
+<Info>
+For components that redraw frequently (like encoder dials), allocate the canvas once in the constructor and reuse it to avoid repeated heap allocations.
+</Info>
+
+## Built-in Components
+
+RADR provides several reusable display components:
+
+| Component | Description | Key Features |
+|-----------|-------------|-------------|
+| `TextButton` | Rounded button with text label | Press state, dynamic text/color, GPIO binding |
+| `IconButton` | Button with a 24x24 bitmap icon | Same as TextButton but with icon |
+| `EncoderDial` | Circular arc showing parameter values | Multiple parameters, color per arc, encoder-driven |
+| `LinearRailGraph` | Horizontal bar for stroke/depth | Two-parameter visualization |
+| `BarChart` | Labeled horizontal bar for a single value | Focus state, color, generic value range |
+| `DynamicText` | Auto-updating text display | Color changes, centering |
+| `Image` | JPEG image renderer | Arbitrary position and size |
+
+### TextButton
+
+Draws a rounded rectangle with centered text. Can be bound to a GPIO pin for press-state feedback, or use `NO_PIN` for visual-only display.
+
+```cpp
+// Button bound to a physical pin (shows press state)
+draw<TextButton>("STOP", pins::BTN_UNDER_C, x, y, width, height);
+
+// Visual-only button (no pin, no press state)
+draw<TextButton>("Depth", NO_PIN, x, y, width, height);
+```
+
+Dynamic updates at runtime:
+
+```cpp
+TextButton *btn = draw<TextButton>("Pause", pins::BTN_UNDER_C, x, y, 120);
+btn->setText("Resume");
+btn->setColors(Colors::green, Colors::black);
+```
+
+### EncoderDial
+
+Draws concentric arcs representing one or more parameters. The focused parameter is highlighted, and the encoder controls its value.
+
+```cpp
+std::map<String, float *> params = {
+    {"Depth", &settings.depth},
+    {"Sensation", &settings.sensation},
+    {"Stroke", &settings.stroke}
+};
+
+draw<EncoderDial>(EncoderDial::Props{
+    .encoder = &rightEncoder,
+    .parameters = params,
+    .focusedIndex = &rightFocusedIndex,
+    .minValue = 0,
+    .maxValue = 100
+});
+```
+
+### BarChart
+
+A simple horizontal bar showing a labeled value within a range. Used by the generic ButtplugIO device for dynamic feature display.
+
+```cpp
+draw<BarChart>(
+    "Vibrate",           // label
+    &vibrateValue,       // pointer to float value
+    0, 20,               // min, max
+    x, y, width, height, // position and size
+    true                 // focused
+);
+```
+
+## Creating Display Objects in Devices
+
+Devices create display objects in their `drawControls()` method using the `draw<T>(...)` template helper from the `Device` base class:
+
+```cpp
+template <typename TDisplayObject, typename... TArgs>
+TDisplayObject *draw(TArgs &&...args);
+```
+
+This creates the component, stores it in the device's `displayObjects` vector (which manages lifetime via `unique_ptr`), and returns a raw pointer for further interaction.
+
+```cpp
+void drawControls() override {
+    // Create components — they're automatically tracked and ticked
+    auto *dial = draw<EncoderDial>(props);
+    auto *btn  = draw<TextButton>("STOP", pins::BTN_UNDER_C, x, y, 120);
+
+    // Store pointers if you need to update them later
+    myButton = btn;
+}
+```
+
+<Info>
+Display objects are automatically cleaned up when the device disconnects or the state changes. You don't need to manually delete them.
+</Info>
+
+## Colors
+
+RADR uses RGB565 color constants defined in `constants/Colors.h`:
+
+| Constant | Color | Hex | Use |
+|----------|-------|-----|-----|
+| `Colors::white` | White | `0xFFFF` | Primary text |
+| `Colors::textForeground` | White | `0xFFFF` | Body text |
+| `Colors::textForegroundSecondary` | Light gray | `0xDEFB` | Secondary text |
+| `Colors::textBackground` | Gray | `0x4AAC` | Button backgrounds |
+| `Colors::depth` | Coral | `0xE186` | Depth parameter |
+| `Colors::sensation` | Blue | `0x3C9F` | Sensation parameter |
+| `Colors::stroke` | Green | `0x4E8A` | Stroke parameter |
+| `Colors::speed` | Purple | `0x5013` | Speed parameter |
+| `Colors::disabled` | Dark gray | `0x1082` | Inactive elements |
+
+## Key Source Files
+
+| File | Purpose |
+|------|---------|
+| `src/components/DisplayObject.h` | Base class for all display components |
+| `src/components/TextButton.h` | Text button component |
+| `src/components/EncoderDial.h` | Circular arc dial component |
+| `src/components/BarChart.h` | Horizontal bar chart component |
+| `src/components/LinearRailGraph.h` | Stroke/depth bar component |
+| `src/components/DynamicText.h` | Auto-updating text component |
+| `src/services/display.h` | TFT instance and mutex |
+| `src/constants/Sizes.h` | Screen dimensions and layout |
+| `src/constants/Colors.h` | RGB565 color palette |
+| `src/pages/controller.cpp` | Main loop that ticks display objects |
+
+## Further Reading
+
+<CardGroup cols={2}>
+<Card title="Input & Event Binding" icon="gamepad" href="/radr/Software/event-binding/introduction">
+How hardware inputs drive UI updates and device control.
+</Card>
+
+<Card title="Device Registry" icon="database" href="/radr/Software/device-registry/introduction">
+How devices are discovered and their UI is created.
+</Card>
+</CardGroup>

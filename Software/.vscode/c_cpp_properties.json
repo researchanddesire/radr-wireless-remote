@@ -241,6 +241,7 @@
                 "/Users/aj/.platformio/packages/framework-arduinoespressif32/cores/esp32",
                 "/Users/aj/.platformio/packages/framework-arduinoespressif32/variants/esp32s3",
                 "/Users/aj/RAD/radr/Software/.pio/libdeps/development/Adafruit seesaw Library",
+                "/Users/aj/RAD/radr/Software/.pio/libdeps/development/Unity/src",
                 "/Users/aj/.platformio/packages/framework-arduinoespressif32/libraries/ArduinoOTA/src",
                 "/Users/aj/.platformio/packages/framework-arduinoespressif32/libraries/AsyncUDP/src",
                 "/Users/aj/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src",
@@ -498,6 +499,7 @@
                     "/Users/aj/.platformio/packages/framework-arduinoespressif32/cores/esp32",
                     "/Users/aj/.platformio/packages/framework-arduinoespressif32/variants/esp32s3",
                     "/Users/aj/RAD/radr/Software/.pio/libdeps/development/Adafruit seesaw Library",
+                    "/Users/aj/RAD/radr/Software/.pio/libdeps/development/Unity/src",
                     "/Users/aj/.platformio/packages/framework-arduinoespressif32/libraries/ArduinoOTA/src",
                     "/Users/aj/.platformio/packages/framework-arduinoespressif32/libraries/AsyncUDP/src",
                     "/Users/aj/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src",
@@ -547,6 +549,7 @@
                 "ARDUINO_VARIANT=\"esp32s3\"",
                 "ARDUINO_BOARD=\"Espressif ESP32-S3-WROOM-1-N16R8 (16 MB QD, 8MB PSRAM)\"",
                 "ARDUINO_PARTITION_default",
+                "UNITY_INCLUDE_CONFIG_H",
                 ""
             ],
             "cStandard": "gnu99",

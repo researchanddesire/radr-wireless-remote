@@ -2,67 +2,71 @@
 #define TEXT_PAGES_H
 
 #include "Arduino.h"
-#include "constants/Strings.h"
+#include <Strings.h>
 
 struct TextPage {
     String title;
     String description;
-    String qrValue = EMPTY_STRING;
+    String qrValue = ui::strings::EMPTY_STRING;
 
-    String leftButtonText = EMPTY_STRING;
-    String rightButtonText = EMPTY_STRING;
+    String leftButtonText = ui::strings::EMPTY_STRING;
+    String rightButtonText = ui::strings::EMPTY_STRING;
 };
 
 static const TextPage updatePage = {
-    .title = UPDATING_TITLE,
-    .description = UPDATING_DESCRIPTION,
-    .leftButtonText = CANCEL_STRING,
+    .title = ui::strings::UPDATING_TITLE,
+    .description = ui::strings::UPDATING_DESCRIPTION,
+    .leftButtonText = ui::strings::CANCEL_STRING,
 };
 
 static const TextPage updateFilesystemPage = {
-    .title = "Updating Filesystem",
-    .description = "Updating filesystem...",
-    .leftButtonText = CANCEL_STRING,
+    .title = ui::strings::UPDATING_FILESYSTEM_TITLE,
+    .description = ui::strings::UPDATING_FILESYSTEM_DESCRIPTION,
+    .leftButtonText = ui::strings::CANCEL_STRING,
 };
 
 static const TextPage updateSoftwarePage = {
-    .title = "Updating Software",
-    .description = "Updating software...",
-    .leftButtonText = CANCEL_STRING,
+    .title = ui::strings::UPDATING_SOFTWARE_TITLE,
+    .description = ui::strings::UPDATING_SOFTWARE_DESCRIPTION,
+    .leftButtonText = ui::strings::CANCEL_STRING,
 };
 
 static const TextPage updateDonePage = {
-    .title = "Update Complete",
-    .description = "Update complete!",
-    .leftButtonText = CANCEL_STRING,
+    .title = ui::strings::UPDATE_COMPLETE_TITLE,
+    .description = ui::strings::UPDATE_COMPLETE_DESCRIPTION,
+    .leftButtonText = ui::strings::CANCEL_STRING,
 };
 
 static const TextPage deviceSearchPage = {
-    .title = DEVICE_SEARCH_TITLE,
-    .description = DEVICE_SEARCH_DESCRIPTION,
-    .leftButtonText = CANCEL_STRING,
+    .title = ui::strings::DEVICE_SEARCH_TITLE,
+    .description = ui::strings::DEVICE_SEARCH_DESCRIPTION,
+    .leftButtonText = ui::strings::CANCEL_STRING,
 };
 
 static const TextPage deviceConnectingPage = {
-    .title = "Connecting",
-    .description = "Connecting to device...",
-    .leftButtonText = CANCEL_STRING,
+    .title = ui::strings::CONNECTING_TITLE,
+    .description = ui::strings::CONNECTING_DESCRIPTION,
+    .leftButtonText = ui::strings::CANCEL_STRING,
 };
 
-static const TextPage deviceStopPage = {.title = DEVICE_STOP_TITLE,
-                                        .description = DEVICE_STOP_DESCRIPTION,
-                                        .leftButtonText = GO_BACK,
-                                        .rightButtonText = GO_HOME};
+static const TextPage deviceStopPage = {
+    .title = ui::strings::DEVICE_STOP_TITLE,
+    .description = ui::strings::DEVICE_STOP_DESCRIPTION,
+    .leftButtonText = ui::strings::GO_BACK,
+    .rightButtonText = ui::strings::GO_HOME,
+};
 
 static const TextPage wifiSettingsPage = {
-    .title = WIFI_SETTINGS_TITLE,
-    .description = WIFI_SETTINGS_DESCRIPTION,
-    .qrValue = WIFI_SETTINGS_QR_VALUE,
-    .leftButtonText = GO_BACK};
+    .title = ui::strings::WIFI_SETTINGS_TITLE,
+    .description = ui::strings::WIFI_SETTINGS_DESCRIPTION,
+    .qrValue = ui::strings::WIFI_SETTINGS_QR_VALUE,
+    .leftButtonText = ui::strings::GO_BACK,
+};
 
 static const TextPage wifiConnectedPage = {
-    .title = WIFI_CONNECTED_TITLE,
-    .description = WIFI_CONNECTED_DESCRIPTION,
-    .leftButtonText = GO_BACK};
+    .title = ui::strings::WIFI_CONNECTED_TITLE,
+    .description = ui::strings::WIFI_CONNECTED_DESCRIPTION,
+    .leftButtonText = ui::strings::GO_BACK,
+};
 
 #endif  // TEXT_PAGES_H

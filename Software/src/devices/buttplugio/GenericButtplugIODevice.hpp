@@ -2,11 +2,12 @@
 #define GENERIC_BUTTPLUGIO_DEVICE_HPP
 
 #include <Arduino.h>
-#include <constants.h>
-#include <constants/Sizes.h>
 
+#include <Strings.h>
 #include <components/BarChart.h>
 #include <components/TextButton.h>
+#include <constants.h>
+#include <constants/Sizes.h>
 #include <devices/device.h>
 
 #include "buttplugIOProtocol.hpp"
@@ -106,7 +107,7 @@ class GenericButtplugIODevice : public Device, public ButtplugIoProtocol {
 
     const char *getName() override {
         return getDeviceName().length() > 0 ? getDeviceName().c_str()
-                                            : "Device";
+                                            : ui::strings::DEFAULT_DEVICE_NAME;
     }
 
     void drawControls() override {
@@ -129,15 +130,17 @@ class GenericButtplugIODevice : public Device, public ButtplugIoProtocol {
         // Shoulder buttons for cycling features (only if >1 feature)
         if (numFeatures > 1) {
             draw<TextButton>("<<", pins::BTN_L_SHOULDER, -5, -5);
-            draw<TextButton>(">>", pins::BTN_R_SHOULDER, DISPLAY_WIDTH - 65, -5);
+            draw<TextButton>(">>", pins::BTN_R_SHOULDER, DISPLAY_WIDTH - 65,
+                             -5);
         }
 
         // Bar charts stacked vertically in the page area
         int barHeight = 22;
         int barGap = 4;
-        int totalBarsHeight = numFeatures * barHeight + (numFeatures - 1) * barGap;
-        int startY = Display::PageY +
-                     (Display::PageHeight - 35 - totalBarsHeight) / 2;
+        int totalBarsHeight =
+            numFeatures * barHeight + (numFeatures - 1) * barGap;
+        int startY =
+            Display::PageY + (Display::PageHeight - 35 - totalBarsHeight) / 2;
         startY = max((int)Display::PageY + 4, startY);
         int barWidth = DISPLAY_WIDTH - 10;
         int barX = 5;
@@ -145,13 +148,10 @@ class GenericButtplugIODevice : public Device, public ButtplugIoProtocol {
         barCharts.clear();
         for (int i = 0; i < numFeatures; i++) {
             int yPos = startY + i * (barHeight + barGap);
-            auto *bar = draw<BarChart>(
-                feats[i].name.c_str(),
-                &featureValues[i],
-                feats[i].minValue,
-                feats[i].maxValue,
-                barX, yPos, barWidth, barHeight,
-                i == focusedIndex);
+            auto *bar =
+                draw<BarChart>(feats[i].name.c_str(), &featureValues[i],
+                               feats[i].minValue, feats[i].maxValue, barX, yPos,
+                               barWidth, barHeight, i == focusedIndex);
             barCharts.push_back(bar);
         }
 
@@ -211,8 +211,8 @@ class GenericButtplugIODevice : public Device, public ButtplugIoProtocol {
 
         leftEncoder.setBoundaries(feats[focusedIndex].minValue,
                                   feats[focusedIndex].maxValue);
-        leftEncoder.setAcceleration(
-            feats[focusedIndex].maxValue > 50 ? 100 : 0);
+        leftEncoder.setAcceleration(feats[focusedIndex].maxValue > 50 ? 100
+                                                                      : 0);
 
         if (focusedIndex < (int)featureValues.size()) {
             leftEncoder.setEncoderValue((int)featureValues[focusedIndex]);

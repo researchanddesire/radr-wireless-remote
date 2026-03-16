@@ -3,14 +3,14 @@
 
 #include "DisplayObject.h"
 #include "constants/Colors.h"
-#include "constants/Strings.h"
 #include "services/display.h"
+#include <Strings.h>
 
 class DynamicText : public DisplayObject {
   private:
     static constexpr const char *TAG = "DynamicText";
     const std::string &text;
-    std::string lastValue = EMPTY_STRING;
+    std::string lastValue = ui::strings::EMPTY_STRING;
     uint16_t currentTextColor;
     uint16_t lastTextColor;
 

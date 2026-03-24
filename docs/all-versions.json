@@ -1,0 +1,38 @@
+[
+    {
+        "version": "0.0.1",
+        "major": 0,
+        "minor": 0,
+        "patch": 1,
+        "url": "./v/0.0.1/version.json",
+        "firmware": "./v/0.0.1/firmware.bin",
+        "datetime": "2025-07-08T15:59:23Z"
+    },
+    {
+        "version": "0.0.3",
+        "major": 0,
+        "minor": 0,
+        "patch": 3,
+        "url": "./v/0.0.3/version.json",
+        "firmware": "./v/0.0.3/firmware.bin",
+        "datetime": "2025-09-24T10:33:49Z"
+    },
+    {
+        "version": "0.0.4",
+        "major": 0,
+        "minor": 0,
+        "patch": 4,
+        "url": "./v/0.0.4/version.json",
+        "firmware": "./v/0.0.4/firmware.bin",
+        "datetime": "2025-09-24T10:41:21Z"
+    },
+    {
+        "version": "0.0.5",
+        "major": 0,
+        "minor": 0,
+        "patch": 5,
+        "url": "./v/0.0.5/version.json",
+        "firmware": "./v/0.0.5/firmware.bin",
+        "datetime": "2025-09-25T02:17:51Z"
+    }
+]

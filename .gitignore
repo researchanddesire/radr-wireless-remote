@@ -7,3 +7,7 @@
 Documentation/node_modules/
 
 scratch
+Software/.vscode/launch.json
+Software/.vscode/c_cpp_properties.json
+Software/.DS_Store
+.DS_Store

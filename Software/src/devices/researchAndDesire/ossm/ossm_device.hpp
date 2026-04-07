@@ -65,7 +65,7 @@ class OSSM : public Device {
         };
     }
 
-    const char *getName() override { return "OSSM"; }
+    const char *getName() override { return "OSSM - Stroke Engine"; }
     NimBLEUUID getServiceUUID() override { return NimBLEUUID(OSSM_SERVICE_ID); }
 
     void drawControls() override {

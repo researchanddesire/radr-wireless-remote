@@ -46,11 +46,13 @@ class OSSMAdvanced : public Device {
     EncoderBar *valueBar = nullptr;
 
     explicit OSSMAdvanced(const NimBLEAdvertisedDevice *advertisedDevice) : Device(advertisedDevice) {
-        characteristics = {
-            {"control", {NimBLEUUID(CHARACTERISTIC_ADVANCED_CONTROL_UUID)}},
-            {"config", {NimBLEUUID(CHARACTERISTIC_ADVANCED_CONFIG_UUID)}},
-            {"status", {NimBLEUUID(CHARACTERISTIC_ADVANCED_STATUS_UUID)}},
-        };
+        characteristics = {{"control", {NimBLEUUID(CHARACTERISTIC_ADVANCED_CONTROL_UUID)}},
+                           {"config", {NimBLEUUID(CHARACTERISTIC_ADVANCED_CONFIG_UUID)}},
+                           {"status", DeviceCharacteristics{NimBLEUUID(CHARACTERISTIC_ADVANCED_STATUS_UUID),
+                                                            .notifyCallback = [this](NimBLERemoteCharacteristic *pRemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify) {
+                                                                String test = String(reinterpret_cast<char *>(pData), length);
+                                                                ESP_LOGD("CALLBACK", "Returned, value: %s", test.c_str());
+                                                            }}}};
     }
 
     const char *getName() override { return "OSSM - Advanced Mode"; }
@@ -158,6 +160,8 @@ class OSSMAdvanced : public Device {
         }
         controlNames.pop_back();
 
+        menu.clear();
+        settingsMenu.clear();
         this->menu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, "placeholder", nullptr, "placeholder", .metaIndex = 0});
         this->settingsMenu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, "placeholder", nullptr, "placeholder", .metaIndex = 0});
 

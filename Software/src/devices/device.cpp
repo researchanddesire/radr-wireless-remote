@@ -348,3 +348,10 @@ void Device::drawDeviceMenu() {
 
     drawMenu();
 }
+
+void Device::drawDeviceSettingsMenu() {
+    activeMenu = &settingsMenu;
+    activeMenuCount = settingsMenu.size();
+
+    drawMenu();
+}

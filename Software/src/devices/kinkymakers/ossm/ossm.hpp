@@ -21,6 +21,7 @@ extern void resetMiddleButtonCounter();
 #define CHARACTERISTIC_ADVANCED_CONTROL_UUID "4F53534D-6164-7661-6E63-6564636F6D6D"
 
 std::vector<std::string> controlNames;
+std::vector<std::string> modifierNames;
 
 struct Control {
     float value;
@@ -34,9 +35,9 @@ std::unordered_map<std::string, Control> advancedSettings;
 class OSSMAdvanced : public Device {
   public:
     bool isFirstConnect = true;
-    int focusedIndex = 0;
+    int baseIndex = 0;
+    int modifierIndex = 0;
 
-    TextButton *menuButton = nullptr;
     TextButton *pauseStopButton = nullptr;
 
     std::vector<TextButton *> buttons = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
@@ -50,75 +51,115 @@ class OSSMAdvanced : public Device {
             {"config", {NimBLEUUID(CHARACTERISTIC_ADVANCED_CONFIG_UUID)}},
             {"status", {NimBLEUUID(CHARACTERISTIC_ADVANCED_STATUS_UUID)}},
         };
-        ESP_LOGI(TAG, "explicit ");
     }
 
     const char *getName() override { return "OSSM - Advanced Mode"; }
     NimBLEUUID getServiceUUID() override { return NimBLEUUID(OSSM_ADVANCED_SERVICE_ID); }
 
-    void drawControls() override {
+    void drawCommonControls() {
         leftEncoder.setBoundaries(0, 100);
         leftEncoder.setAcceleration(50);
-
         rightEncoder.setBoundaries(0, 100);
         rightEncoder.setAcceleration(50);
+        draw<TextButton>("<<", pins::BTN_L_SHOULDER, -5, -5);
+        draw<TextButton>(">>", pins::BTN_R_SHOULDER, DISPLAY_WIDTH - 65, -5);
+        speedBar = draw<EncoderBar>(EncoderBar::Props{.encoder = &leftEncoder, .value = &advancedSettings["SP"].value, .x = 5, .y = (int16_t)(Display::PageY + 35), .width = 20, .mapToLeftLed = true});
+        speedBar->setColor(Colors::speed);
+        valueBar = draw<EncoderBar>(EncoderBar::Props{
+            .encoder = &rightEncoder, .value = &advancedSettings[controlNames[0]].value, .x = (int16_t)(DISPLAY_WIDTH - 10 - 5), .y = (int16_t)(Display::PageY + 35), .mapToRightLed = true});
 
+        pauseStopButton = draw<TextButton>("Pause", pins::BTN_UNDER_C, DISPLAY_WIDTH / 2 - 60, Display::HEIGHT - 30, 120);
+
+        updateTabAppearance();
+        syncRightEncoder();
+        syncLeftEncoder();
+    }
+
+    void drawControls() override {
         const int16_t tabY = Display::StatusbarHeight;
         const int16_t tabHeight = 24;
         const int16_t tabGap = 0;
         const int16_t totalGaps = (controlNames.size() - 1) * tabGap;
         const int16_t tabWidth = (DISPLAY_WIDTH - totalGaps) / controlNames.size();
-
         for (int i = 0; i < controlNames.size(); i++) {
             buttons[i] = draw<TextButton>(String(controlNames[i].c_str()), NO_PIN, i * (tabWidth + tabGap), tabY, tabWidth, tabHeight);
         }
 
-        draw<TextButton>("<<", pins::BTN_L_SHOULDER, -5, -5);
-        draw<TextButton>(">>", pins::BTN_R_SHOULDER, DISPLAY_WIDTH - 65, -5);
+        draw<TextButton>("Presets", pins::BTN_UNDER_L, -5, Display::HEIGHT - 30, 90);
+        draw<TextButton>("Modifier", pins::BTN_UNDER_R, DISPLAY_WIDTH - 85, Display::HEIGHT - 30, 90);
 
-        menuButton = draw<TextButton>("Menu", pins::BTN_UNDER_L, -5, Display::HEIGHT - 30, 90);
-        pauseStopButton = draw<TextButton>("Pause", pins::BTN_UNDER_C, DISPLAY_WIDTH / 2 - 60, Display::HEIGHT - 30, 120);
-        draw<TextButton>("Presets", pins::BTN_UNDER_R, DISPLAY_WIDTH - 85, Display::HEIGHT - 30, 90);
-
-        if (menuButton) {
-            menuButton->setColors(Colors::disabled, Colors::black);
-        }
-
-        speedBar = draw<EncoderBar>(EncoderBar::Props{.encoder = &leftEncoder, .value = &advancedSettings["SP"].value, .x = 5, .y = (int16_t)(Display::PageY + 35), .width = 20, .mapToLeftLed = true});
-        speedBar->setColor(Colors::speed);
-        valueBar = draw<EncoderBar>(EncoderBar::Props{.encoder = &rightEncoder, .value = &advancedSettings[controlNames[0]].value, .x = (int16_t)(DISPLAY_WIDTH - 10 - 5), .y = (int16_t)(Display::PageY + 35), .mapToRightLed = true});
-
-        updateTabAppearance();
-        syncRightEncoder();
-        syncLeftEncoder();
-
+        drawCommonControls();
         onResume();
     }
 
     void onConnect() override {
-        // when we connect, pull the current state from the device
+        controlNames.clear();
+        modifierNames.clear();
+        advancedSettings.clear();
         std::string configValues = readString("config") + ',';
         std::string statusString = readString("status") + ',';
+        std::string modifierString;
         int8_t ci = configValues.find(',', 0);
         int8_t si = statusString.find(',', 0);
         while (ci > 0) {
             std::string single = configValues.substr(0, ci);
+            std::string singleStatus = statusString.substr(0, si);
             u8_t j = single.find('(');
             u8_t k = single.find('/');
             u8_t l = single.find(')');
+
             std::string name = single.substr(0, j);
-            float value = std::stof(statusString.substr(0, si));
+            controlNames.push_back(name);
+
+            float value = std::stof(singleStatus);
+            ESP_LOGI(TAG, "String: %s, Value: %f", singleStatus.c_str(), value);
             u8_t minValue = std::stoi(single.substr(j + 1, k));
             u8_t maxValue = std::stoi(single.substr(k + 1, l));
             Control newControl = {value, minValue, maxValue};
-            controlNames.push_back(name);
+
             advancedSettings.emplace(name, newControl);
+
+            int8_t mi = single.find(':');
+            if (mi > 0) {
+                modifierString = single.substr(l + 2) + ':';
+            }
+            mi = modifierString.find(':');
+            std::string iterString = modifierString;
+            while (mi > 0) {
+                j = iterString.find('(');
+                k = iterString.find('/');
+                l = iterString.find(')');
+                std::string modifierName = iterString.substr(0, j);
+                if (std::find(modifierNames.begin(), modifierNames.end(), modifierName) == modifierNames.end()) {
+                    modifierNames.push_back(modifierName);
+                }
+                newControl.minValue = std::stoi(iterString.substr(j + 1, k));
+                newControl.maxValue = std::stoi(iterString.substr(k + 1, l));
+                int8_t ms = singleStatus.find(':');
+                if (ms > 0) {
+                    singleStatus = singleStatus.substr(ms + 1);
+                    newControl.value = std::stof(singleStatus);
+                } else {
+                    newControl.value = newControl.minValue;
+                    if (modifierName == modifierNames[0]) {
+                        newControl.value = newControl.maxValue;
+                    }
+                }
+                advancedSettings.emplace(name + modifierName, newControl);
+
+                iterString = iterString.substr(mi + 1);
+                mi = iterString.find(':');
+            }
+
             configValues = configValues.substr(ci + 1);
             statusString = statusString.substr(si + 1);
             ci = configValues.find(',', 0);
             si = statusString.find(',', 0);
         }
         controlNames.pop_back();
+
+        this->menu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, "placeholder", nullptr, "placeholder", .metaIndex = 0});
+        this->settingsMenu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, "placeholder", nullptr, "placeholder", .metaIndex = 0});
 
         isConnected = true;
         isFirstConnect = false;
@@ -142,12 +183,6 @@ class OSSMAdvanced : public Device {
             pauseStopButton->setColors(Colors::red, Colors::white);
         }
 
-        // TODO: Uncomment this when functionality is added for OSSM Device Menu
-        // Enable menu button when paused
-        // if (menuButton) {
-        //     menuButton->setColors(Colors::textBackground, Colors::black);
-        // }
-
         setMiddleLed(Colors::red, 255);
 
         if (fullStop) {
@@ -168,26 +203,80 @@ class OSSMAdvanced : public Device {
             pauseStopButton->setText("Pause");
             pauseStopButton->setColors(Colors::textBackground, Colors::black);
         }
+    }
 
-        if (menuButton) {
-            menuButton->setColors(Colors::disabled, Colors::black);
+    static void drawModifierTask(void *pvParameters) {
+        bool lastLeftShoulderState = HIGH;
+        bool lastRightShoulderState = HIGH;
+        bool currentLeftShoulderState = HIGH;
+        bool currentRightShoulderState = HIGH;
+        int lastLeftEncoderValue = -1;
+        int currentLeftEncoderValue = -1;
+        int lastRightEncoderValue = -1;
+        int currentRightEncoderValue = -1;
+
+        while (stateMachine->is("device_menu"_s)) {
+            if (device != nullptr) {
+                currentLeftShoulderState = digitalRead(pins::BTN_L_SHOULDER);
+                currentRightShoulderState = digitalRead(pins::BTN_R_SHOULDER);
+                currentLeftEncoderValue = leftEncoder.readEncoder();
+                currentRightEncoderValue = rightEncoder.readEncoder();
+
+                if (currentLeftShoulderState == LOW && lastLeftShoulderState == HIGH) {
+                    device->onLeftBumperClick();
+                }
+                if (currentRightShoulderState == LOW && lastRightShoulderState == HIGH) {
+                    device->onRightBumperClick();
+                }
+                if (currentLeftEncoderValue != lastLeftEncoderValue) {
+                    setNotIdle("left_encoder");
+                    device->onLeftEncoderChange(currentLeftEncoderValue);
+                    lastLeftEncoderValue = currentLeftEncoderValue;
+                }
+                if (currentRightEncoderValue != lastRightEncoderValue) {
+                    setNotIdle("right_encoder");
+                    device->onRightEncoderChange(currentRightEncoderValue);
+                    lastRightEncoderValue = currentRightEncoderValue;
+                }
+                for (auto &displayObject : device->displayObjects) {
+                    displayObject->tick();
+                }
+                lastLeftShoulderState = currentLeftShoulderState;
+                lastRightShoulderState = currentRightShoulderState;
+            }
+            vTaskDelay(16 / portTICK_PERIOD_MS);
         }
+
+        vTaskDelete(NULL);
+    }
+
+    void drawDeviceSettingsMenu() override {
+        clearPage();
+
+        draw<TextButton>("Back", pins::BTN_UNDER_L, -5, Display::HEIGHT - 30, 90);
+        draw<TextButton>("Select", pins::BTN_UNDER_R, DISPLAY_WIDTH - 85, Display::HEIGHT - 30, 90);
+
+        drawCommonControls();
     }
 
     void drawDeviceMenu() override {
-        activeMenu = &menu;
-        activeMenuCount = menu.size();
+        clearPage();
 
-        // // Find the menu index that corresponds to the current pattern
-        // currentOption = 0;  // Default to first item
-        // for (int i = 0; i < menu.size(); i++) {
-        //     if (menu[i].metaIndex == static_cast<int>(settings.pattern)) {
-        //         currentOption = i;
-        //         break;
-        //     }
-        // }
+        const int16_t tabY = Display::StatusbarHeight;
+        const int16_t tabHeight = 24;
+        const int16_t tabGap = 0;
+        const int16_t totalGaps = (modifierNames.size() - 1) * tabGap;
+        const int16_t tabWidth = (DISPLAY_WIDTH - totalGaps) / modifierNames.size();
+        for (int i = 0; i < modifierNames.size(); i++) {
+            buttons[i] = draw<TextButton>(String(modifierNames[i].c_str()), NO_PIN, i * (tabWidth + tabGap), tabY, tabWidth, tabHeight);
+        }
 
-        drawMenu();
+        draw<TextButton>("Back", pins::BTN_UNDER_L, -5, Display::HEIGHT - 30, 90);
+        draw<TextButton>("Back", pins::BTN_UNDER_R, DISPLAY_WIDTH - 85, Display::HEIGHT - 30, 90);
+        drawCommonControls();
+
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+        xTaskCreatePinnedToCore(drawModifierTask, "drawModifierTask", 5 * configMINIMAL_STACK_SIZE, device, 5, NULL, 1);
     }
 
     void dumpValues(std::string when) {
@@ -208,39 +297,70 @@ class OSSMAdvanced : public Device {
         return send("control", std::string("6:") + std::to_string(speed) + ",");
     }
 
-    bool setBaseValue(int value) {
-        Control *edit = &advancedSettings[controlNames[focusedIndex]];
+    bool setModifierValue(int value) {
+        std::string c = controlNames[baseIndex] + modifierNames[modifierIndex];
+        Control *edit = &advancedSettings[c];
         value = constrain(value, edit->minValue, edit->maxValue);
         if (value == edit->value && !hasRightEncoderChanged(true)) {
             return 1;
         }
         edit->value = value;
-        return send("control", std::to_string(focusedIndex) + ":" + std::to_string(value) + ",");
+        return send("control", std::to_string(baseIndex) + ":" + std::to_string(modifierIndex) + ":" + std::to_string(value) + ",");
+    }
+
+    bool setBaseValue(int value) {
+        Control *edit = &advancedSettings[controlNames[baseIndex]];
+        value = constrain(value, edit->minValue, edit->maxValue);
+        if (value == edit->value && !hasRightEncoderChanged(true)) {
+            return 1;
+        }
+        edit->value = value;
+        return send("control", std::to_string(baseIndex) + ":" + std::to_string(value) + ",");
     }
 
     void syncRightEncoder() {
-        std::string s = controlNames[focusedIndex];
+        std::string s = controlNames[baseIndex];
+        if (stateMachine->is("device_menu"_s)) {
+            s += modifierNames[modifierIndex];
+        }
         Control *c = &advancedSettings[s];
-        valueBar->setValue(&c->value);
-        rightEncoder.setEncoderValue(c->value);
         rightEncoder.setBoundaries(c->minValue, c->maxValue);
+        rightEncoder.setEncoderValue(c->value);
+        valueBar->setMinMax(c->minValue, c->maxValue);
+        valueBar->setValue(&c->value);
     };
 
     void syncLeftEncoder() { leftEncoder.setEncoderValue(advancedSettings["SP"].value); }
 
     void onLeftBumperClick() override {
-        focusedIndex = (focusedIndex + controlNames.size() - 1) % controlNames.size();
+        if (stateMachine->is("device_menu"_s)) {
+            modifierIndex = (modifierIndex + modifierNames.size() - 1) % modifierNames.size();
+        } else {
+            baseIndex = (baseIndex + controlNames.size() - 1) % controlNames.size();
+            modifierIndex = 0;
+        }
         syncRightEncoder();
         updateTabAppearance();
     }
 
     void onRightBumperClick() override {
-        focusedIndex = (focusedIndex + 1) % controlNames.size();
+        if (stateMachine->is("device_menu"_s)) {
+            modifierIndex = (modifierIndex + 1) % modifierNames.size();
+        } else {
+            baseIndex = (baseIndex + 1) % controlNames.size();
+            modifierIndex = 0;
+        }
         syncRightEncoder();
         updateTabAppearance();
     }
 
-    void onRightEncoderChange(int value) override { setBaseValue(value); }
+    void onRightEncoderChange(int value) override {
+        if (stateMachine->is("device_menu"_s)) {
+            setModifierValue(value);
+            return;
+        }
+        setBaseValue(value);
+    }
 
     void onLeftEncoderChange(int value) override {
         setSpeed(value);
@@ -249,15 +369,17 @@ class OSSMAdvanced : public Device {
         }
     }
 
-    bool needsPersistentLeftEncoderMonitoring() const override { return true; }
-
   private:
     void updateTabAppearance() {
         for (int i = 0; i < controlNames.size(); i++) {
             buttons[i]->setColors(Colors::disabled, Colors::black);
         }
-        uint16_t newColor = buttonColors[focusedIndex];
-        buttons[focusedIndex]->setColors(newColor, Colors::white);
+        int index = baseIndex;
+        if (stateMachine->is("device_menu"_s)) {
+            index = modifierIndex;
+        }
+        uint16_t newColor = buttonColors[index];
+        buttons[index]->setColors(newColor, Colors::black);
 
         valueBar->setColor(newColor);
     }

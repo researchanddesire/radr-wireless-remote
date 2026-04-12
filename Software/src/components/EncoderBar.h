@@ -51,6 +51,12 @@ class EncoderBar : public DisplayObject {
         isDirty = true;
     }
 
+    void setMinMax(int newMinValue, int newMaxValue) {
+        minValue = newMinValue;
+        maxValue = newMaxValue;
+        isDirty = true;
+    }
+
     void setColor(uint16_t newColor) {
         fillColor = newColor;
         isDirty = true;

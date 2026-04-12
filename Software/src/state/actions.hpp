@@ -163,6 +163,8 @@ namespace actions {
 
     auto drawDeviceMenu = []() { device->drawDeviceMenu(); };
 
+    auto drawDeviceSettingsMenu = []() { device->drawDeviceSettingsMenu(); };
+
     auto onDeviceMenuItemSelected = []() {
         device->onDeviceMenuItemSelected(currentOption);
     };

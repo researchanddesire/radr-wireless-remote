@@ -39,7 +39,6 @@ struct ossm_remote_state {
             "main_menu"_s + event<right_button_pressed>[isOption<>(MenuItemE::RESTART)] = "restart"_s,
             "main_menu"_s + event<connected_event> / start = "device_draw_control"_s,
 
-
             "settings_menu"_s + on_entry<_> / drawSettingsMenu,
             "settings_menu"_s + event<left_button_pressed> = "main_menu"_s,
             "settings_menu"_s + event<right_button_pressed>[isOption<>(MenuItemE::BACK)] = "main_menu"_s,
@@ -47,8 +46,6 @@ struct ossm_remote_state {
             "settings_menu"_s + event<right_button_pressed>[isOption<>(MenuItemE::UPDATE) && isOnline<>] = "update"_s,
             "settings_menu"_s + event<right_button_pressed>[isOption<>(MenuItemE::UPDATE)] = "update.wifi"_s,
             "settings_menu"_s + event<right_button_pressed>[isOption<>(MenuItemE::RESTART)] = "restart"_s,
-
-
 
             "update"_s + on_entry<_> / (drawPage(updatePage), startTask(updateTask, updateTaskName, updateTaskHandle)),
             "update"_s + event<done> [hasFilesystemUpdate<>] = "update.filesystem"_s,
@@ -77,7 +74,7 @@ struct ossm_remote_state {
             "device_draw_control"_s + on_entry<_> / drawControl,
             "device_draw_control"_s + event<right_button_pressed>[hasDeviceMenu<>] = "device_menu"_s,
             // TODO: Left Menu button needs a menu behind it, this is disabled and only a placeholder for now.
-            "device_draw_control"_s + event<left_button_pressed>[hasDeviceSettingsMenu<>] = "device_menu"_s,
+            "device_draw_control"_s + event<left_button_pressed>[hasDeviceSettingsMenu<>] = "device_settings_menu"_s,
             "device_draw_control"_s + event<middle_button_pressed> / softPause,
             "device_draw_control"_s + event<middle_button_second_press> / stop = "device_stop"_s,
             "device_draw_control"_s + event<disconnected_event> / disconnect = "main_menu"_s,
@@ -88,6 +85,13 @@ struct ossm_remote_state {
             "device_menu"_s + event<middle_button_second_press> / softPause = "device_draw_control"_s,
             "device_menu"_s + event<middle_button_pressed> / softPause = "device_draw_control"_s,
             "device_menu"_s + event<disconnected_event> / disconnect = "main_menu"_s,
+
+            "device_settings_menu"_s + on_entry<_> / drawDeviceSettingsMenu,
+            "device_settings_menu"_s + event<left_button_pressed> = "device_draw_control"_s,
+            "device_settings_menu"_s + event<right_button_pressed> / onDeviceMenuItemSelected = "device_draw_control"_s,
+            "device_settings_menu"_s + event<middle_button_second_press> / softPause = "device_draw_control"_s,
+            "device_settings_menu"_s + event<middle_button_pressed> / softPause = "device_draw_control"_s,
+            "device_settings_menu"_s + event<disconnected_event> / disconnect = "main_menu"_s,
 
             "device_stop"_s + on_entry<_> / (drawPage(deviceStopPage), stop),
             "device_stop"_s + event<right_button_pressed> / disconnect = "main_menu"_s,

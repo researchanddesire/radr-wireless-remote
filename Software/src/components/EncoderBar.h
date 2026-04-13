@@ -16,7 +16,6 @@
 
 class EncoderBar : public DisplayObject {
   private:
-    bool lastButtonState = false;
     float *value;
     int lastValue;
     const uint16_t color;
@@ -34,14 +33,20 @@ class EncoderBar : public DisplayObject {
         int16_t x = -1;
         int16_t y = -1;
         int16_t width = 10;
-        int16_t height = 130;
+        int16_t height = 140;
         int minValue = 0;
         int maxValue = 100;
         bool mapToLeftLed = false;
         bool mapToRightLed = false;
     };
 
-    explicit EncoderBar(const Props &props) : DisplayObject(props.x, props.y, props.width, props.height), value(props.value), color(ST77XX_WHITE), encoder(*props.encoder), mapToLeftLed(props.mapToLeftLed), mapToRightLed(props.mapToRightLed) {
+    explicit EncoderBar(const Props &props)
+        : DisplayObject(props.x, props.y, props.width, props.height),
+          value(props.value),
+          color(ST77XX_WHITE),
+          encoder(*props.encoder),
+          mapToLeftLed(props.mapToLeftLed),
+          mapToRightLed(props.mapToRightLed) {
         minValue = props.minValue;
         maxValue = props.maxValue;
     }

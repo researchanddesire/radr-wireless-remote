@@ -12,6 +12,8 @@
 #include <services/leds.h>
 
 #include "../../device.h"
+#include "AdvancedModifierChart.h"
+#include "AdvancedStructs.h"
 #include "state/remote.h"
 // Forward declaration for button counter reset function
 extern void resetMiddleButtonCounter();
@@ -19,18 +21,6 @@ extern void resetMiddleButtonCounter();
 #define CHARACTERISTIC_ADVANCED_STATUS_UUID "4F53534D-6164-7661-6E63-656473746174"
 #define CHARACTERISTIC_ADVANCED_CONFIG_UUID "4F53534D-6164-7661-6E63-6564636F6E66"
 #define CHARACTERISTIC_ADVANCED_CONTROL_UUID "4F53534D-6164-7661-6E63-6564636F6D6D"
-
-std::vector<std::string> controlNames;
-std::vector<std::string> modifierNames;
-
-struct Control {
-    float value;
-    std::uint8_t minValue = 0;
-    std::uint8_t maxValue = 100;
-};
-
-std::vector<uint16_t> buttonColors = {0xf860, 0xfc00, 0xffe0, 0x07e0, 0x07ff, 0x001f, 0xa87d};
-std::unordered_map<std::string, Control> advancedSettings;
 
 class OSSMAdvanced : public Device {
   public:
@@ -65,12 +55,12 @@ class OSSMAdvanced : public Device {
         rightEncoder.setAcceleration(50);
         draw<TextButton>("<<", pins::BTN_L_SHOULDER, -5, -5);
         draw<TextButton>(">>", pins::BTN_R_SHOULDER, DISPLAY_WIDTH - 65, -5);
-        speedBar = draw<EncoderBar>(EncoderBar::Props{.encoder = &leftEncoder, .value = &advancedSettings["SP"].value, .x = 5, .y = (int16_t)(Display::PageY + 35), .width = 20, .mapToLeftLed = true});
+        speedBar = draw<EncoderBar>(EncoderBar::Props{.encoder = &leftEncoder, .value = &advancedSettings["SP"].value, .x = 0, .y = (int16_t)(Display::PageY + 35), .mapToLeftLed = true});
         speedBar->setColor(Colors::speed);
         valueBar = draw<EncoderBar>(EncoderBar::Props{
-            .encoder = &rightEncoder, .value = &advancedSettings[controlNames[0]].value, .x = (int16_t)(DISPLAY_WIDTH - 10 - 5), .y = (int16_t)(Display::PageY + 35), .mapToRightLed = true});
+            .encoder = &rightEncoder, .value = &advancedSettings[controlNames[0]].value, .x = (int16_t)(DISPLAY_WIDTH - 10), .y = (int16_t)(Display::PageY + 35), .mapToRightLed = true});
 
-        pauseStopButton = draw<TextButton>("Pause", pins::BTN_UNDER_C, DISPLAY_WIDTH / 2 - 60, Display::HEIGHT - 30, 120);
+        pauseStopButton = draw<TextButton>("Pause", pins::BTN_UNDER_C, DISPLAY_WIDTH / 2 - 60, Display::HEIGHT - 25, 120, 30);
 
         updateTabAppearance();
         syncRightEncoder();
@@ -87,8 +77,8 @@ class OSSMAdvanced : public Device {
             buttons[i] = draw<TextButton>(String(controlNames[i].c_str()), NO_PIN, i * (tabWidth + tabGap), tabY, tabWidth, tabHeight);
         }
 
-        draw<TextButton>("Presets", pins::BTN_UNDER_L, -5, Display::HEIGHT - 30, 90);
-        draw<TextButton>("Modifier", pins::BTN_UNDER_R, DISPLAY_WIDTH - 85, Display::HEIGHT - 30, 90);
+        draw<TextButton>("Presets", pins::BTN_UNDER_L, -5, Display::HEIGHT - 25, 90, 30);
+        draw<TextButton>("Modifier", pins::BTN_UNDER_R, DISPLAY_WIDTH - 85, Display::HEIGHT - 25, 90, 30);
 
         drawCommonControls();
         onResume();
@@ -257,8 +247,8 @@ class OSSMAdvanced : public Device {
     void drawDeviceSettingsMenu() override {
         clearPage();
 
-        draw<TextButton>("Back", pins::BTN_UNDER_L, -5, Display::HEIGHT - 30, 90);
-        draw<TextButton>("Select", pins::BTN_UNDER_R, DISPLAY_WIDTH - 85, Display::HEIGHT - 30, 90);
+        draw<TextButton>("Back", pins::BTN_UNDER_L, -5, Display::HEIGHT - 25, 90, 30);
+        draw<TextButton>("Select", pins::BTN_UNDER_R, DISPLAY_WIDTH - 85, Display::HEIGHT - 25, 90, 30);
 
         drawCommonControls();
     }
@@ -275,8 +265,10 @@ class OSSMAdvanced : public Device {
             buttons[i] = draw<TextButton>(String(modifierNames[i].c_str()), NO_PIN, i * (tabWidth + tabGap), tabY, tabWidth, tabHeight);
         }
 
-        draw<TextButton>("Back", pins::BTN_UNDER_L, -5, Display::HEIGHT - 30, 90);
-        draw<TextButton>("Back", pins::BTN_UNDER_R, DISPLAY_WIDTH - 85, Display::HEIGHT - 30, 90);
+        draw<TextButton>("Back", pins::BTN_UNDER_L, -5, Display::HEIGHT - 25, 90, 30);
+        draw<TextButton>("Back", pins::BTN_UNDER_R, DISPLAY_WIDTH - 85, Display::HEIGHT - 25, 90, 30);
+
+        draw<AdvancedModifierChart>(AdvancedModifierChart::Props{.encoder = &rightEncoder});
         drawCommonControls();
 
         vTaskDelay(10 / portTICK_PERIOD_MS);
@@ -361,6 +353,7 @@ class OSSMAdvanced : public Device {
     void onRightEncoderChange(int value) override {
         if (stateMachine->is("device_menu"_s)) {
             setModifierValue(value);
+            speedBar->isFirstDraw = true;
             return;
         }
         setBaseValue(value);
@@ -379,10 +372,10 @@ class OSSMAdvanced : public Device {
             buttons[i]->setColors(Colors::disabled, Colors::black);
         }
         int index = baseIndex;
+        uint16_t newColor = advancedColors[index];
         if (stateMachine->is("device_menu"_s)) {
             index = modifierIndex;
         }
-        uint16_t newColor = buttonColors[index];
         buttons[index]->setColors(newColor, Colors::black);
 
         valueBar->setColor(newColor);

@@ -44,7 +44,7 @@ class AdvancedModifierChart : public DisplayObject {
     void draw() override {
         if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
             tft.fillRect(x - 1, y - 1, width + 2, height + 2, COLOR_BLACK);
-            uint8_t maxSteps = 10;
+            uint8_t maxSteps = 4;
             for (int c = 0; c < controlNames.size(); c++) {
                 uint8_t modSteps = 0;
                 for (int m = 1; m < controlNames.size() - 1; m++) {
@@ -53,7 +53,6 @@ class AdvancedModifierChart : public DisplayObject {
                 maxSteps = max(maxSteps, modSteps);
             }
             float stepWidth = width / float(maxSteps);
-            ESP_LOGI("AMC", "MaxSTeps: %d", maxSteps);
             for (int c = 0; c < controlNames.size(); c++) {
                 uint16_t lineColor = advancedColors[c];
                 Control control = advancedSettings[controlNames[c]];

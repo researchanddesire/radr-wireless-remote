@@ -62,6 +62,9 @@ class AdvancedModifierChart : public DisplayObject {
                 baseY += y;
                 float modValueRatio = (1 - advancedSettings[controlNames[c] + modifierNames[0]].value / float(control.maxValue));
                 uint16_t modY = baseY + dist * modValueRatio;
+                if (c == 1) {
+                    modY = baseY - (height - dist) * modValueRatio;
+                }
                 int startX = x;
                 startX -= stepWidth * advancedSettings[controlNames[c] + modifierNames[5]].value;
                 int m = 0;

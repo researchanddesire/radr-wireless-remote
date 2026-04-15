@@ -59,7 +59,7 @@ class AdvancedModifierChart : public DisplayObject {
 
                 float baseValueRatio = (1 - control.value / 100.0);
                 float modValueRatio = (1 - advancedSettings[controlNames[c] + modifierNames[0]].value / 100.0);
-                float strokeRatio = 1;
+                float strokeRatio = 1 - baseValueRatio;
                 if (c < 2) {
                     strokeRatio = (advancedSettings[controlNames[0]].value - advancedSettings[controlNames[1]].value) / 100.0;
                 }

@@ -74,7 +74,7 @@ class OSSMAdvanced : public Device {
         const int16_t totalGaps = (controlNames.size() - 1) * tabGap;
         const int16_t tabWidth = (DISPLAY_WIDTH - totalGaps) / controlNames.size();
         for (int i = 0; i < controlNames.size(); i++) {
-            buttons[i] = draw<TextButton>(String(controlNames[i].c_str()), NO_PIN, i * (tabWidth + tabGap), tabY, tabWidth, tabHeight);
+            buttons[i] = draw<TextButton>(String(int(advancedSettings[controlNames[i]].value)), NO_PIN, i * (tabWidth + tabGap), tabY, tabWidth, tabHeight);
         }
 
         draw<TextButton>("Presets", pins::BTN_UNDER_L, -5, Display::HEIGHT - 25, 90, 30);
@@ -262,7 +262,7 @@ class OSSMAdvanced : public Device {
         const int16_t totalGaps = (modifierNames.size() - 1) * tabGap;
         const int16_t tabWidth = (DISPLAY_WIDTH - totalGaps) / modifierNames.size();
         for (int i = 0; i < modifierNames.size(); i++) {
-            buttons[i] = draw<TextButton>(String(modifierNames[i].c_str()), NO_PIN, i * (tabWidth + tabGap), tabY, tabWidth, tabHeight);
+            buttons[i] = draw<TextButton>(String(int(advancedSettings[controlNames[baseIndex] + modifierNames[i]].value)), NO_PIN, i * (tabWidth + tabGap), tabY, tabWidth, tabHeight);
         }
 
         draw<TextButton>("Back", pins::BTN_UNDER_L, -5, Display::HEIGHT - 25, 90, 30);
@@ -362,10 +362,12 @@ class OSSMAdvanced : public Device {
 
     void onRightEncoderChange(int value) override {
         if (stateMachine->is("device_menu"_s)) {
+            buttons[modifierIndex]->setText(String(value));
             setModifierValue(value);
             speedBar->isFirstDraw = true;
             return;
         }
+        buttons[baseIndex]->setText(String(value));
         setBaseValue(value);
     }
 

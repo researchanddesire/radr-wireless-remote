@@ -56,19 +56,20 @@ class AdvancedModifierChart : public DisplayObject {
             for (int c = 0; c < controlNames.size(); c++) {
                 uint16_t lineColor = advancedColors[c];
                 Control control = advancedSettings[controlNames[c]];
-                float baseValueRatio = (1 - control.value / float(control.maxValue));
-                uint16_t baseY = height * baseValueRatio;
-                uint16_t dist = height - baseY;
-                baseY += y;
-                float modValueRatio = (1 - advancedSettings[controlNames[c] + modifierNames[0]].value / float(control.maxValue));
-                uint16_t modY = baseY + dist * modValueRatio;
-                if (c == 1) {
-                    modY = baseY - (height - dist) * modValueRatio;
-                }
-                int startX = x;
-                startX -= stepWidth * advancedSettings[controlNames[c] + modifierNames[5]].value;
-                int m = 0;
 
+                float baseValueRatio = (1 - control.value / 100.0);
+                float modValueRatio = (1 - advancedSettings[controlNames[c] + modifierNames[0]].value / 100.0);
+                float strokeRatio = 1;
+                if (c < 2) {
+                    strokeRatio = (advancedSettings[controlNames[0]].value - advancedSettings[controlNames[1]].value) / 100.0;
+                }
+                uint16_t baseY = height * baseValueRatio + y;
+                uint16_t modY = baseY + height * strokeRatio * modValueRatio;
+                if (c == 1) {
+                    modY = baseY - height * strokeRatio * modValueRatio;
+                }
+                int startX = x - stepWidth * advancedSettings[controlNames[c] + modifierNames[5]].value;
+                int m = 0;
                 while (startX < x + width) {
                     uint16_t step = advancedSettings[controlNames[c] + modifierNames[m + 1]].value * stepWidth;
                     switch (m) {

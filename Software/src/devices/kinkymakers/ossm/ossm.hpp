@@ -53,8 +53,8 @@ class OSSMAdvanced : public Device {
         leftEncoder.setAcceleration(50);
         rightEncoder.setBoundaries(0, 100);
         rightEncoder.setAcceleration(50);
-        draw<TextButton>("<<", pins::BTN_L_SHOULDER, -5, -5);
-        draw<TextButton>(">>", pins::BTN_R_SHOULDER, DISPLAY_WIDTH - 65, -5);
+        draw<TextButton>("<<", pins::BTN_L_SHOULDER, -5, -5, 70, 30);
+        draw<TextButton>(">>", pins::BTN_R_SHOULDER, DISPLAY_WIDTH - 65, -5, 70, 30);
         speedBar = draw<EncoderBar>(EncoderBar::Props{.encoder = &leftEncoder, .value = &advancedSettings["SP"].value, .x = 0, .y = (int16_t)(Display::PageY + 35), .mapToLeftLed = true});
         speedBar->setColor(Colors::speed);
         valueBar = draw<EncoderBar>(EncoderBar::Props{
@@ -311,6 +311,12 @@ class OSSMAdvanced : public Device {
             return 1;
         }
         edit->value = value;
+        if (baseIndex == 0) {
+            advancedSettings[controlNames[1]].maxValue = value;
+        }
+        if (baseIndex == 1) {
+            advancedSettings[controlNames[0]].minValue = value;
+        }
         return send("control", std::to_string(baseIndex) + ":" + std::to_string(value) + ",");
     }
 
@@ -322,7 +328,11 @@ class OSSMAdvanced : public Device {
         Control *c = &advancedSettings[s];
         rightEncoder.setBoundaries(c->minValue, c->maxValue);
         rightEncoder.setEncoderValue(c->value);
-        valueBar->setMinMax(c->minValue, c->maxValue);
+        if (s == controlNames[1]) {
+            valueBar->setMinMax(c->minValue, 100);
+        } else {
+            valueBar->setMinMax(c->minValue, c->maxValue);
+        }
         valueBar->setValue(&c->value);
     };
 

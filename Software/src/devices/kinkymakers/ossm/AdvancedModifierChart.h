@@ -9,10 +9,8 @@
 
 #include "esp_log.h"
 #include "services/display.h"
-#include "services/leds.h"
 // Adafruit GFX fonts
 #include <AiEsp32RotaryEncoder.h>
-#include <vector>
 
 #include "AdvancedStructs.h"
 
@@ -91,7 +89,6 @@ class AdvancedModifierChart : public DisplayObject {
                     m = (m + 1) % 4;
                 }
             }
-            // tft.drawRoundRect(x - 1, y - 1, width + 2, height + 2, 5, COLOR_WHITE);
         }
         xSemaphoreGive(displayMutex);
     }

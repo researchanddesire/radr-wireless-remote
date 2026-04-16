@@ -15,7 +15,7 @@
 #include "AdvancedModifierChart.h"
 #include "AdvancedStructs.h"
 #include "state/remote.h"
-// Forward declaration for button counter reset function
+
 extern void resetMiddleButtonCounter();
 
 #define CHARACTERISTIC_ADVANCED_STATUS_UUID "4F53534D-6164-7661-6E63-656473746174"
@@ -275,13 +275,6 @@ class OSSMAdvanced : public Device {
         xTaskCreatePinnedToCore(drawModifierTask, "drawModifierTask", 5 * configMINIMAL_STACK_SIZE, device, 5, NULL, 1);
     }
 
-    void dumpValues(std::string when) {
-        for (int i = 0; i < controlNames.size(); i++) {
-            std::string s = controlNames[i];
-            Control *edit = &advancedSettings[s];
-            ESP_LOGI(TAG, "%s, Dump: %s, Value: %f", when.c_str(), s.c_str(), edit->value);
-        }
-    }
 
     bool setSpeed(int speed) {
         Control *edit = &advancedSettings["SP"];

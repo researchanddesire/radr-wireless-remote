@@ -12,8 +12,6 @@
 #include <services/leds.h>
 
 #include "../../device.h"
-#include "AdvancedModifierChart.h"
-#include "AdvancedStructs.h"
 #include "state/remote.h"
 
 extern void resetMiddleButtonCounter();
@@ -22,11 +20,24 @@ extern void resetMiddleButtonCounter();
 #define CHARACTERISTIC_ADVANCED_CONFIG_UUID "4F53534D-6164-7661-6E63-6564636F6E66"
 #define CHARACTERISTIC_ADVANCED_CONTROL_UUID "4F53534D-6164-7661-6E63-6564636F6D6D"
 
+struct Control {
+    float value;
+    std::uint8_t minValue = 0;
+    std::uint8_t maxValue = 100;
+};
+
+std::unordered_map<std::string, Control> advancedSettings;
+std::vector<std::string> controlNames;
+std::vector<std::string> modifierNames;
+
+std::vector<uint16_t> advancedColors = {0xf860, 0xfc00, 0xffe0, 0x07e0, 0x07ff, 0x001f, 0xa87d};
+
 class OSSMAdvanced : public Device {
   public:
     bool isFirstConnect = true;
     int baseIndex = 0;
     int modifierIndex = 0;
+    GFXcanvas16 *canvas = new GFXcanvas16(300, 152);
 
     TextButton *pauseStopButton = nullptr;
 
@@ -47,6 +58,77 @@ class OSSMAdvanced : public Device {
 
     const char *getName() override { return "OSSM - Advanced Mode"; }
     NimBLEUUID getServiceUUID() override { return NimBLEUUID(OSSM_ADVANCED_SERVICE_ID); }
+
+    float getMaxSteps() {
+        uint8_t maxSteps = 4;
+        for (u_int8_t c = 0; c < controlNames.size(); c++) {
+            uint8_t modSteps = 0;
+            for (u_int8_t m = 1; m < controlNames.size() - 1; m++) {
+                modSteps += advancedSettings[controlNames[c] + modifierNames[m]].value;
+            }
+            maxSteps = max(maxSteps, modSteps);
+        }
+        return maxSteps;
+    }
+
+    void drawSingleModifier(uint8_t c, uint16_t x = 0, int16_t y = 0, int16_t width = 300, int16_t height = 150) {
+        if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            float stepWidth = width / getMaxSteps();
+            uint16_t lineColor = advancedColors[c];
+            Control control = advancedSettings[controlNames[c]];
+
+            float baseValueRatio = (1 - control.value / 100.0);
+            float modValueRatio = (1 - advancedSettings[controlNames[c] + modifierNames[0]].value / 100.0);
+            float strokeRatio = 1 - baseValueRatio;
+            if (c < 2) {
+                strokeRatio = (advancedSettings[controlNames[0]].value - advancedSettings[controlNames[1]].value) / 100.0;
+            }
+            uint16_t baseY = height * baseValueRatio + y;
+            uint16_t modY = baseY + height * strokeRatio * modValueRatio;
+            if (c == 1) {
+                modY = baseY - height * strokeRatio * modValueRatio;
+            }
+            int startX = x - stepWidth * advancedSettings[controlNames[c] + modifierNames[5]].value;
+            int m = 0;
+            ESP_LOGI(TAG, "BASE: %d, MOD: %d", baseY, modY);
+            while (startX < x + width) {
+                uint16_t step = advancedSettings[controlNames[c] + modifierNames[m + 1]].value * stepWidth;
+                switch (m) {
+                    case 0:
+                        canvas->drawLine(startX, baseY, startX + step, modY, lineColor);
+                        break;
+                    case 1:
+                        canvas->drawLine(startX, modY, startX + step, modY, lineColor);
+                        break;
+                    case 2:
+                        canvas->drawLine(startX, modY, startX + step, baseY, lineColor);
+                        break;
+                    case 3:
+                        canvas->drawLine(startX, baseY, startX + step, baseY, lineColor);
+                        break;
+                }
+
+                startX += step;
+                m = (m + 1) % 4;
+            }
+        }
+        xSemaphoreGive(displayMutex);
+    }
+
+    void drawModifierDisplay() {
+        canvas->fillRect(0, 0, 300, 152, COLOR_BLACK);
+
+        for (u_int8_t c = 0; c < controlNames.size(); c++) {
+            if (c != baseIndex) {
+                drawSingleModifier(c);
+            }
+        }
+        drawSingleModifier(baseIndex);
+        drawSingleModifier(baseIndex, 0, 1);
+        drawSingleModifier(baseIndex, 1, 0);
+        drawSingleModifier(baseIndex, 1, 1);
+        tft.drawRGBBitmap(10, 60, canvas->getBuffer(), canvas->width(), canvas->height());
+    }
 
     void drawCommonControls() {
         leftEncoder.setBoundaries(0, 100);
@@ -268,13 +350,13 @@ class OSSMAdvanced : public Device {
         draw<TextButton>("Back", pins::BTN_UNDER_L, -5, Display::HEIGHT - 25, 90, 30);
         draw<TextButton>("Back", pins::BTN_UNDER_R, DISPLAY_WIDTH - 85, Display::HEIGHT - 25, 90, 30);
 
-        draw<AdvancedModifierChart>(AdvancedModifierChart::Props{.encoder = &rightEncoder});
         drawCommonControls();
+
+        drawModifierDisplay();
 
         vTaskDelay(10 / portTICK_PERIOD_MS);
         xTaskCreatePinnedToCore(drawModifierTask, "drawModifierTask", 5 * configMINIMAL_STACK_SIZE, device, 5, NULL, 1);
     }
-
 
     bool setSpeed(int speed) {
         Control *edit = &advancedSettings["SP"];
@@ -294,6 +376,7 @@ class OSSMAdvanced : public Device {
             return 1;
         }
         edit->value = value;
+        drawModifierDisplay();
         return send("control", std::to_string(baseIndex) + ":" + std::to_string(modifierIndex) + ":" + std::to_string(value) + ",");
     }
 
@@ -345,6 +428,7 @@ class OSSMAdvanced : public Device {
     void onRightBumperClick() override {
         if (stateMachine->is("device_menu"_s)) {
             modifierIndex = (modifierIndex + 1) % modifierNames.size();
+            drawModifierDisplay();
         } else {
             baseIndex = (baseIndex + 1) % controlNames.size();
             modifierIndex = 0;

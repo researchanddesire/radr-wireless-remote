@@ -72,62 +72,59 @@ class OSSMAdvanced : public Device {
     }
 
     void drawSingleModifier(uint8_t c, uint16_t x = 0, int16_t y = 0, int16_t width = 300, int16_t height = 150) {
-        if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-            float stepWidth = width / getMaxSteps();
-            uint16_t lineColor = advancedColors[c];
-            Control control = advancedSettings[controlNames[c]];
+        float stepWidth = width / getMaxSteps();
+        uint16_t lineColor = advancedColors[c];
+        Control control = advancedSettings[controlNames[c]];
 
-            float baseValueRatio = (1 - control.value / 100.0);
-            float modValueRatio = (1 - advancedSettings[controlNames[c] + modifierNames[0]].value / 100.0);
-            float strokeRatio = 1 - baseValueRatio;
-            if (c < 2) {
-                strokeRatio = (advancedSettings[controlNames[0]].value - advancedSettings[controlNames[1]].value) / 100.0;
-            }
-            uint16_t baseY = height * baseValueRatio + y;
-            uint16_t modY = baseY + height * strokeRatio * modValueRatio;
-            if (c == 1) {
-                modY = baseY - height * strokeRatio * modValueRatio;
-            }
-            int startX = x - stepWidth * advancedSettings[controlNames[c] + modifierNames[5]].value;
-            int m = 0;
-            ESP_LOGI(TAG, "BASE: %d, MOD: %d", baseY, modY);
-            while (startX < x + width) {
-                uint16_t step = advancedSettings[controlNames[c] + modifierNames[m + 1]].value * stepWidth;
-                switch (m) {
-                    case 0:
-                        canvas->drawLine(startX, baseY, startX + step, modY, lineColor);
-                        break;
-                    case 1:
-                        canvas->drawLine(startX, modY, startX + step, modY, lineColor);
-                        break;
-                    case 2:
-                        canvas->drawLine(startX, modY, startX + step, baseY, lineColor);
-                        break;
-                    case 3:
-                        canvas->drawLine(startX, baseY, startX + step, baseY, lineColor);
-                        break;
-                }
-
-                startX += step;
-                m = (m + 1) % 4;
-            }
+        float baseValueRatio = (1 - control.value / 100.0);
+        float modValueRatio = (1 - advancedSettings[controlNames[c] + modifierNames[0]].value / 100.0);
+        float strokeRatio = 1 - baseValueRatio;
+        if (c < 2) {
+            strokeRatio = (advancedSettings[controlNames[0]].value - advancedSettings[controlNames[1]].value) / 100.0;
         }
-        xSemaphoreGive(displayMutex);
+        uint16_t baseY = height * baseValueRatio + y;
+        uint16_t modY = baseY + height * strokeRatio * modValueRatio;
+        if (c == 1) {
+            modY = baseY - height * strokeRatio * modValueRatio;
+        }
+        int startX = x - stepWidth * advancedSettings[controlNames[c] + modifierNames[5]].value;
+        int m = 0;
+        ESP_LOGI(TAG, "BASE: %d, MOD: %d", baseY, modY);
+        while (startX < x + width) {
+            uint16_t step = advancedSettings[controlNames[c] + modifierNames[m + 1]].value * stepWidth;
+            switch (m) {
+                case 0:
+                    canvas->drawLine(startX, baseY, startX + step, modY, lineColor);
+                    break;
+                case 1:
+                    canvas->drawLine(startX, modY, startX + step, modY, lineColor);
+                    break;
+                case 2:
+                    canvas->drawLine(startX, modY, startX + step, baseY, lineColor);
+                    break;
+                case 3:
+                    canvas->drawLine(startX, baseY, startX + step, baseY, lineColor);
+                    break;
+            }
+
+            startX += step;
+            m = (m + 1) % 4;
+        }
     }
 
     void drawModifierDisplay() {
         canvas->fillRect(0, 0, 300, 152, COLOR_BLACK);
 
         for (u_int8_t c = 0; c < controlNames.size(); c++) {
-            if (c != baseIndex) {
-                drawSingleModifier(c);
-            }
+            drawSingleModifier(c);
         }
-        drawSingleModifier(baseIndex);
         drawSingleModifier(baseIndex, 0, 1);
         drawSingleModifier(baseIndex, 1, 0);
         drawSingleModifier(baseIndex, 1, 1);
-        tft.drawRGBBitmap(10, 60, canvas->getBuffer(), canvas->width(), canvas->height());
+        if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            tft.drawRGBBitmap(10, 60, canvas->getBuffer(), canvas->width(), canvas->height());
+        }
+        xSemaphoreGive(displayMutex);
     }
 
     void drawCommonControls() {

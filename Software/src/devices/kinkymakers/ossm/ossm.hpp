@@ -35,8 +35,12 @@ std::vector<uint16_t> advancedColors = {0xf860, 0xfc00, 0xffe0, 0x07e0, 0x07ff, 
 class OSSMAdvanced : public Device {
   public:
     bool isFirstConnect = true;
-    int baseIndex = 0;
-    int modifierIndex = 0;
+    uint8_t baseIndex = 0;
+    uint8_t modifierIndex = 0;
+    const int16_t tabY = Display::StatusbarHeight;
+    const int16_t tabHeight = 24;
+    const int16_t tabGap = 4;
+
     GFXcanvas16 *canvas = new GFXcanvas16(300, 152);
 
     TextButton *pauseStopButton = nullptr;
@@ -59,15 +63,34 @@ class OSSMAdvanced : public Device {
     const char *getName() override { return "OSSM - Advanced Mode"; }
     NimBLEUUID getServiceUUID() override { return NimBLEUUID(OSSM_ADVANCED_SERVICE_ID); }
 
+    uint64_t getGCD(uint64_t a, uint64_t b) {
+        while (b != 0) {
+            uint64_t c = b;
+            b = a % b;
+            a = c;
+        }
+        return a;
+    }
+    uint64_t getLCM(uint64_t a, uint64_t b) {
+        return (a * b) / getGCD(a, b);  //
+    }
+
     float getMaxSteps() {
         uint8_t maxSteps = 4;
+        uint64_t multiple = 0;
         for (u_int8_t c = 0; c < controlNames.size(); c++) {
             uint8_t modSteps = 0;
             for (u_int8_t m = 1; m < controlNames.size() - 1; m++) {
                 modSteps += advancedSettings[controlNames[c] + modifierNames[m]].value;
             }
+            if (multiple) {
+                multiple = getLCM(multiple, modSteps);
+            } else {
+                multiple = modSteps;
+            }
             maxSteps = max(maxSteps, modSteps);
         }
+        ESP_LOGI(TAG, "LCM: %d", multiple);
         return maxSteps;
     }
 
@@ -112,6 +135,13 @@ class OSSMAdvanced : public Device {
         }
     }
 
+    void drawCanvasToDisplay() {
+        if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            tft.drawRGBBitmap(10, 60, canvas->getBuffer(), canvas->width(), canvas->height());
+        }
+        xSemaphoreGive(displayMutex);
+    }
+
     void drawModifierDisplay() {
         canvas->fillRect(0, 0, 300, 152, COLOR_BLACK);
 
@@ -121,10 +151,90 @@ class OSSMAdvanced : public Device {
         drawSingleModifier(baseIndex, 0, 1);
         drawSingleModifier(baseIndex, 1, 0);
         drawSingleModifier(baseIndex, 1, 1);
-        if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-            tft.drawRGBBitmap(10, 60, canvas->getBuffer(), canvas->width(), canvas->height());
+        drawCanvasToDisplay();
+    }
+
+    float bezierMath(float v0, float v1, float v2, float v3, float t) {
+        float output = pow(1 - t, 3) * v0;
+        output += 3 * pow(1 - t, 2) * t * v1;
+        output += 3 * (1 - t) * pow(t, 2) * v2;
+        output += pow(t, 3) * v3;
+        return output;
+    }
+
+    void bezCurve(uint16_t x0, uint16_t x1, uint16_t y0, uint16_t y1, float r, float t, uint16_t color = COLOR_WHITE) {
+        float diff = (x1 - x0) * r;
+        uint16_t x = floor(bezierMath(x0, x0 + diff, x1 - diff, x1, t));
+        uint16_t y = floor(bezierMath(y0, y0, y1, y1, t));
+        canvas->drawPixel(x, y, color);
+    }
+
+    void drawCurveDisplay() {
+        canvas->fillRect(0, 0, 300, 152, COLOR_BLACK);
+        float y1 = 150 - advancedSettings[controlNames[0]].value * 1.5;
+        float y0 = 150 - advancedSettings[controlNames[1]].value * 1.5;
+
+        float diff = y0 - y1;
+        float y1m = (1 - advancedSettings[controlNames[0] + modifierNames[0]].value / 100.0) * diff + y1;
+        float y0m = y0 - (1 - advancedSettings[controlNames[1] + modifierNames[0]].value / 100.0) * diff;
+
+        float a = advancedSettings[controlNames[2]].value;
+        float am = advancedSettings[controlNames[2] + modifierNames[0]].value / 100.0 * a;
+        float b = advancedSettings[controlNames[3]].value;
+        float bm = advancedSettings[controlNames[3] + modifierNames[0]].value / 100.0 * b;
+        uint16_t x = (1 - (a / b) / (a / b + 1)) * 300;
+        uint16_t xm = (1 - (am / bm) / (am / bm + 1)) * 300;
+        ESP_LOGI(TAG, "XM: %d, X: %d", xm, x);
+
+        float c = advancedSettings[controlNames[4]].value;
+        float cm = advancedSettings[controlNames[4] + modifierNames[0]].value / 100.0 * c;
+        float d = advancedSettings[controlNames[5]].value;
+        float dm = advancedSettings[controlNames[4] + modifierNames[0]].value / 100.0 * d;
+
+        uint16_t inColor = COLOR_WHITE;
+        uint16_t outColor = COLOR_WHITE;
+
+        switch (baseIndex) {
+            case 0:
+                canvas->drawFastHLine(0, y1, 300, advancedColors[baseIndex]);
+                for (uint16_t p = 0; p <= 300; p += 5) {
+                    canvas->drawPixel(p, y1m, advancedColors[baseIndex]);
+                }
+                break;
+            case 1:
+                canvas->drawFastHLine(0, y0, 300, advancedColors[baseIndex]);
+                for (uint16_t p = 0; p <= 300; p += 5) {
+                    canvas->drawPixel(p, y0m, advancedColors[baseIndex]);
+                }
+                break;
+            case 2:
+            case 3:
+                canvas->drawFastVLine(x, 0, 150, advancedColors[baseIndex]);
+                for (uint16_t p = 0; p <= 150; p += 5) {
+                    canvas->drawPixel(xm, p, advancedColors[baseIndex]);
+                }
+                break;
+            case 4:
+                inColor = advancedColors[baseIndex];
+                break;
+            case 5:
+                outColor = advancedColors[baseIndex];
+                break;
         }
-        xSemaphoreGive(displayMutex);
+        for (uint16_t p = 0; p <= x; p += 1) {
+            bezCurve(0, x, y0, y1, 0.1 + 0.4 * (1 - c / 100.0), p / float(x), inColor);
+        }
+        for (uint16_t p = 0; p <= (300 - x); p += 1) {
+            bezCurve(300, x, y0, y1, 0.1 + 0.4 * (1 - d / 100.0), p / float(300 - x), outColor);
+        }
+        for (uint16_t p = 0; p <= xm; p += 5) {
+            bezCurve(0, xm, y0m, y1m, 0.1 + 0.4 * (1 - cm / 100.0), p / float(xm), inColor);
+        }
+        for (uint16_t p = 0; p <= (300 - xm); p += 5) {
+            bezCurve(300, xm, y0m, y1m, 0.1 + 0.4 * (1 - dm / 100.0), p / float(300 - xm), outColor);
+        }
+
+        drawCanvasToDisplay();
     }
 
     void drawCommonControls() {
@@ -147,17 +257,15 @@ class OSSMAdvanced : public Device {
     }
 
     void drawControls() override {
-        const int16_t tabY = Display::StatusbarHeight;
-        const int16_t tabHeight = 24;
-        const int16_t tabGap = 0;
-        const int16_t totalGaps = (controlNames.size() - 1) * tabGap;
-        const int16_t tabWidth = (DISPLAY_WIDTH - totalGaps) / controlNames.size();
-        for (int i = 0; i < controlNames.size(); i++) {
+        uint8_t totalGaps = (controlNames.size() - 1) * tabGap;
+        uint8_t tabWidth = (DISPLAY_WIDTH - totalGaps) / controlNames.size();
+        for (uint8_t i = 0; i < controlNames.size(); i++) {
             buttons[i] = draw<TextButton>(String(int(advancedSettings[controlNames[i]].value)), NO_PIN, i * (tabWidth + tabGap), tabY, tabWidth, tabHeight);
         }
 
         draw<TextButton>("Presets", pins::BTN_UNDER_L, -5, Display::HEIGHT - 25, 90, 30);
         draw<TextButton>("Modifier", pins::BTN_UNDER_R, DISPLAY_WIDTH - 85, Display::HEIGHT - 25, 90, 30);
+        drawCurveDisplay();
 
         drawCommonControls();
         onResume();
@@ -335,12 +443,9 @@ class OSSMAdvanced : public Device {
     void drawDeviceMenu() override {
         clearPage();
 
-        const int16_t tabY = Display::StatusbarHeight;
-        const int16_t tabHeight = 24;
-        const int16_t tabGap = 0;
-        const int16_t totalGaps = (modifierNames.size() - 1) * tabGap;
-        const int16_t tabWidth = (DISPLAY_WIDTH - totalGaps) / modifierNames.size();
-        for (int i = 0; i < modifierNames.size(); i++) {
+        uint8_t totalGaps = (modifierNames.size() - 1) * tabGap;
+        uint8_t tabWidth = (DISPLAY_WIDTH - totalGaps) / modifierNames.size();
+        for (uint8_t i = 0; i < modifierNames.size(); i++) {
             buttons[i] = draw<TextButton>(String(int(advancedSettings[controlNames[baseIndex] + modifierNames[i]].value)), NO_PIN, i * (tabWidth + tabGap), tabY, tabWidth, tabHeight);
         }
 
@@ -355,7 +460,7 @@ class OSSMAdvanced : public Device {
         xTaskCreatePinnedToCore(drawModifierTask, "drawModifierTask", 5 * configMINIMAL_STACK_SIZE, device, 5, NULL, 1);
     }
 
-    bool setSpeed(int speed) {
+    bool setSpeed(uint8_t speed) {
         Control *edit = &advancedSettings["SP"];
         speed = constrain(speed, edit->minValue, edit->maxValue);
         if (speed == edit->value && !hasLeftEncoderChanged(true)) {
@@ -365,7 +470,7 @@ class OSSMAdvanced : public Device {
         return send("control", std::string("6:") + std::to_string(speed) + ",");
     }
 
-    bool setModifierValue(int value) {
+    bool setModifierValue(uint8_t value) {
         std::string c = controlNames[baseIndex] + modifierNames[modifierIndex];
         Control *edit = &advancedSettings[c];
         value = constrain(value, edit->minValue, edit->maxValue);
@@ -377,7 +482,7 @@ class OSSMAdvanced : public Device {
         return send("control", std::to_string(baseIndex) + ":" + std::to_string(modifierIndex) + ":" + std::to_string(value) + ",");
     }
 
-    bool setBaseValue(int value) {
+    bool setBaseValue(uint8_t value) {
         Control *edit = &advancedSettings[controlNames[baseIndex]];
         value = constrain(value, edit->minValue, edit->maxValue);
         if (value == edit->value && !hasRightEncoderChanged(true)) {
@@ -390,6 +495,7 @@ class OSSMAdvanced : public Device {
         if (baseIndex == 1) {
             advancedSettings[controlNames[0]].minValue = value;
         }
+        drawCurveDisplay();
         return send("control", std::to_string(baseIndex) + ":" + std::to_string(value) + ",");
     }
 
@@ -414,9 +520,11 @@ class OSSMAdvanced : public Device {
     void onLeftBumperClick() override {
         if (stateMachine->is("device_menu"_s)) {
             modifierIndex = (modifierIndex + modifierNames.size() - 1) % modifierNames.size();
+            drawModifierDisplay();
         } else {
             baseIndex = (baseIndex + controlNames.size() - 1) % controlNames.size();
             modifierIndex = 0;
+            drawCurveDisplay();
         }
         syncRightEncoder();
         updateTabAppearance();
@@ -429,6 +537,7 @@ class OSSMAdvanced : public Device {
         } else {
             baseIndex = (baseIndex + 1) % controlNames.size();
             modifierIndex = 0;
+            drawCurveDisplay();
         }
         syncRightEncoder();
         updateTabAppearance();

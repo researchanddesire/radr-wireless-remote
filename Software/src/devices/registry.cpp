@@ -5,7 +5,7 @@
 #include <LittleFS.h>
 
 #include "buttplugio/buttplugIOFactory.h"
-#include "kinkymakers/ossm/ossm.hpp"
+#include "kinkymakers/ossm/advancedPenetration.hpp"
 #include "lovense/LovenseDevice.hpp"
 #include "lovense/data.hpp"
 #include "lovense/domi/domi_device.hpp"

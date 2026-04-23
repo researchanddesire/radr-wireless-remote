@@ -61,7 +61,9 @@ class OSSMAdvanced : public Device {
     ~OSSMAdvanced() {
         delete canvas;
         delete pauseStopButton;
-        delete buttons[];
+        for (auto button : buttons) {
+            delete button;
+        }
         delete speedBar;
         delete valueBar;
     }
@@ -150,7 +152,7 @@ class OSSMAdvanced : public Device {
     void drawModifierDisplay() {
         canvas->fillRect(0, 0, 300, 152, COLOR_BLACK);
 
-        for (u_int8_t c = 0; c < controlNames.size(); c++) {
+        for (u_int8_t c = 0; c < controlNames.size() - 1; c++) {
             drawSingleModifier(c);
         }
         drawSingleModifier(baseIndex, 0, 1);

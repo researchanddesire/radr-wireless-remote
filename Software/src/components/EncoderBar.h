@@ -25,6 +25,7 @@ class EncoderBar : public DisplayObject {
     bool mapToLeftLed = false;
     bool mapToRightLed = false;
     AiEsp32RotaryEncoder &encoder;
+    GFXcanvas16 *canvas;
 
   public:
     struct Props {
@@ -49,6 +50,7 @@ class EncoderBar : public DisplayObject {
           mapToRightLed(props.mapToRightLed) {
         minValue = props.minValue;
         maxValue = props.maxValue;
+        canvas = new GFXcanvas16(props.width, props.height);
     }
 
     void setValue(float *newValue) {
@@ -87,9 +89,10 @@ class EncoderBar : public DisplayObject {
             } else {
                 drawHeight = drawHeight * ratio;
             }
-            tft.fillRect(x, y, width, height, ST77XX_BLACK);
-            tft.fillRoundRect(x + 1, y + height - drawHeight - 1, drawWidth, drawHeight, rounding - 1, fillColor);
-            tft.drawRoundRect(x, y, width, height, rounding, COLOR_WHITE);
+            canvas->fillRect(0, 0, width, height, ST77XX_BLACK);
+            canvas->fillRoundRect(1, height - drawHeight - 1, drawWidth, drawHeight, rounding - 1, fillColor);
+            canvas->drawRoundRect(0, 0, width, height, rounding, COLOR_WHITE);
+            tft.drawRGBBitmap(x, y, canvas->getBuffer(), canvas->width(), canvas->height());
         }
         updateLeds();
         xSemaphoreGive(displayMutex);

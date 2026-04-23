@@ -45,6 +45,8 @@ class TextButton : public DisplayObject {
         canvas = new GFXcanvas16(width, height);
     }
 
+    ~TextButton() { delete canvas; }
+
     // Methods to dynamically change button appearance
     void setText(const String &text) { buttonText = text; }
 

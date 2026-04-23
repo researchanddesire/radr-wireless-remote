@@ -53,6 +53,8 @@ class EncoderBar : public DisplayObject {
         canvas = new GFXcanvas16(props.width, props.height);
     }
 
+    ~EncoderBar() { delete canvas; }
+
     void setValue(float *newValue) {
         value = newValue;
         isDirty = true;

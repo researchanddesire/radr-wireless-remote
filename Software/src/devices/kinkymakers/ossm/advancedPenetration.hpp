@@ -58,6 +58,14 @@ class OSSMAdvanced : public Device {
                                                                                                                                       size_t length, bool isNotify) { readCount++; }}}};
     }
 
+    ~OSSMAdvanced() {
+        delete canvas;
+        delete pauseStopButton;
+        delete buttons[];
+        delete speedBar;
+        delete valueBar;
+    }
+
     const char *getName() override { return "OSSM - Advanced Mode"; }
     NimBLEUUID getServiceUUID() override { return NimBLEUUID(OSSM_ADVANCED_SERVICE_ID); }
 
@@ -229,11 +237,13 @@ class OSSMAdvanced : public Device {
         for (uint16_t p = 0; p <= (300 - x); p += 1) {
             bezCurve(300, x, y0, y1, 0.1 + 0.4 * (1 - d / 100.0), p / float(300 - x), outColor);
         }
-        for (uint16_t p = 0; p <= xm; p += 5) {
-            bezCurve(0, xm, y0m, y1m, 0.1 + 0.4 * (1 - cm / 100.0), p / float(xm), inColor);
-        }
-        for (uint16_t p = 0; p <= (300 - xm); p += 5) {
-            bezCurve(300, xm, y0m, y1m, 0.1 + 0.4 * (1 - dm / 100.0), p / float(300 - xm), outColor);
+        if (y0 != y0m || y1 != y1m) {
+            for (uint16_t p = 0; p <= xm; p += 5) {
+                bezCurve(0, xm, y0m, y1m, 0.1 + 0.4 * (1 - cm / 100.0), p / float(xm), inColor);
+            }
+            for (uint16_t p = 0; p <= (300 - xm); p += 5) {
+                bezCurve(300, xm, y0m, y1m, 0.1 + 0.4 * (1 - dm / 100.0), p / float(300 - xm), outColor);
+            }
         }
 
         drawCanvasToDisplay();
@@ -482,6 +492,7 @@ class OSSMAdvanced : public Device {
 
     void drawDeviceMenu() override {
         clearPage();
+        device->displayObjects.clear();
 
         uint8_t totalGaps = (modifierNames.size() - 1) * tabGap;
         uint8_t tabWidth = (DISPLAY_WIDTH - totalGaps) / modifierNames.size();

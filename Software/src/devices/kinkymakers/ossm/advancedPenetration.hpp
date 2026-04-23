@@ -35,6 +35,7 @@ std::vector<uint16_t> advancedColors = {0xf860, 0xfc00, 0xffe0, 0x07e0, 0x07ff, 
 class OSSMAdvanced : public Device {
   public:
     bool isFirstConnect = true;
+    int8_t readCount = 0;
     uint8_t baseIndex = 0;
     uint8_t modifierIndex = 0;
     const int16_t tabY = Display::StatusbarHeight;
@@ -53,11 +54,8 @@ class OSSMAdvanced : public Device {
     explicit OSSMAdvanced(const NimBLEAdvertisedDevice *advertisedDevice) : Device(advertisedDevice) {
         characteristics = {{"control", {NimBLEUUID(CHARACTERISTIC_ADVANCED_CONTROL_UUID)}},
                            {"config", {NimBLEUUID(CHARACTERISTIC_ADVANCED_CONFIG_UUID)}},
-                           {"status", DeviceCharacteristics{NimBLEUUID(CHARACTERISTIC_ADVANCED_STATUS_UUID),
-                                                            .notifyCallback = [this](NimBLERemoteCharacteristic *pRemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify) {
-                                                                String test = String(reinterpret_cast<char *>(pData), length);
-                                                                ESP_LOGD("CALLBACK", "Returned, value: %s", test.c_str());
-                                                            }}}};
+                           {"status", DeviceCharacteristics{NimBLEUUID(CHARACTERISTIC_ADVANCED_STATUS_UUID), .notifyCallback = [this](NimBLERemoteCharacteristic *pRemoteCharacteristic, uint8_t *pData,
+                                                                                                                                      size_t length, bool isNotify) { readCount++; }}}};
     }
 
     const char *getName() override { return "OSSM - Advanced Mode"; }
@@ -77,20 +75,20 @@ class OSSMAdvanced : public Device {
 
     float getMaxSteps() {
         uint8_t maxSteps = 4;
-        uint64_t multiple = 0;
+        // uint64_t multiple = 0;
         for (u_int8_t c = 0; c < controlNames.size(); c++) {
             uint8_t modSteps = 0;
             for (u_int8_t m = 1; m < controlNames.size() - 1; m++) {
                 modSteps += advancedSettings[controlNames[c] + modifierNames[m]].value;
             }
-            if (multiple) {
-                multiple = getLCM(multiple, modSteps);
-            } else {
-                multiple = modSteps;
-            }
+            // if (multiple) {
+            //     multiple = getLCM(multiple, modSteps);
+            // } else {
+            //     multiple = modSteps;
+            // }
             maxSteps = max(maxSteps, modSteps);
         }
-        ESP_LOGI(TAG, "LCM: %d", multiple);
+        // ESP_LOGI(TAG, "LCM: %d", multiple);
         return maxSteps;
     }
 
@@ -112,7 +110,6 @@ class OSSMAdvanced : public Device {
         }
         int startX = x - stepWidth * advancedSettings[controlNames[c] + modifierNames[5]].value;
         int m = 0;
-        ESP_LOGI(TAG, "BASE: %d, MOD: %d", baseY, modY);
         while (startX < x + width) {
             uint16_t step = advancedSettings[controlNames[c] + modifierNames[m + 1]].value * stepWidth;
             switch (m) {
@@ -184,7 +181,6 @@ class OSSMAdvanced : public Device {
         float bm = advancedSettings[controlNames[3] + modifierNames[0]].value / 100.0 * b;
         uint16_t x = (1 - (a / b) / (a / b + 1)) * 300;
         uint16_t xm = (1 - (am / bm) / (am / bm + 1)) * 300;
-        ESP_LOGI(TAG, "XM: %d, X: %d", xm, x);
 
         float c = advancedSettings[controlNames[4]].value;
         float cm = advancedSettings[controlNames[4] + modifierNames[0]].value / 100.0 * c;
@@ -197,21 +193,27 @@ class OSSMAdvanced : public Device {
         switch (baseIndex) {
             case 0:
                 canvas->drawFastHLine(0, y1, 300, advancedColors[baseIndex]);
-                for (uint16_t p = 0; p <= 300; p += 5) {
-                    canvas->drawPixel(p, y1m, advancedColors[baseIndex]);
+                if (y1 != y1m) {
+                    for (uint16_t p = 0; p <= 300; p += 5) {
+                        canvas->drawPixel(p, y1m, advancedColors[baseIndex]);
+                    }
                 }
                 break;
             case 1:
                 canvas->drawFastHLine(0, y0, 300, advancedColors[baseIndex]);
-                for (uint16_t p = 0; p <= 300; p += 5) {
-                    canvas->drawPixel(p, y0m, advancedColors[baseIndex]);
+                if (y0 != y0m) {
+                    for (uint16_t p = 0; p <= 300; p += 5) {
+                        canvas->drawPixel(p, y0m, advancedColors[baseIndex]);
+                    }
                 }
                 break;
             case 2:
             case 3:
                 canvas->drawFastVLine(x, 0, 150, advancedColors[baseIndex]);
-                for (uint16_t p = 0; p <= 150; p += 5) {
-                    canvas->drawPixel(xm, p, advancedColors[baseIndex]);
+                if (x != xm) {
+                    for (uint16_t p = 0; p <= 150; p += 5) {
+                        canvas->drawPixel(xm, p, advancedColors[baseIndex]);
+                    }
                 }
                 break;
             case 4:
@@ -257,9 +259,9 @@ class OSSMAdvanced : public Device {
     }
 
     void drawControls() override {
-        uint8_t totalGaps = (controlNames.size() - 1) * tabGap;
-        uint8_t tabWidth = (DISPLAY_WIDTH - totalGaps) / controlNames.size();
-        for (uint8_t i = 0; i < controlNames.size(); i++) {
+        uint8_t totalGaps = (controlNames.size() - 2) * tabGap;
+        uint8_t tabWidth = (DISPLAY_WIDTH - totalGaps) / (controlNames.size() - 1);
+        for (uint8_t i = 0; i < controlNames.size() - 1; i++) {
             buttons[i] = draw<TextButton>(String(int(advancedSettings[controlNames[i]].value)), NO_PIN, i * (tabWidth + tabGap), tabY, tabWidth, tabHeight);
         }
 
@@ -271,36 +273,55 @@ class OSSMAdvanced : public Device {
         onResume();
     }
 
-    void onConnect() override {
+    void parseStatus() {
+        int8_t controlCounter = 0;
+        std::string statusString = readString("status") + ',';
+        int8_t si = statusString.find(',', 0);
+        while (si > 0) {
+            std::string singleStatus = statusString.substr(0, si);
+            float value = std::stof(singleStatus);
+            advancedSettings[controlNames[controlCounter]].value = value;
+
+            int8_t mi = singleStatus.find(':');
+            int8_t modifierCounter = 0;
+            if (mi == -1) {
+                advancedSettings[controlNames[controlCounter] + modifierNames[0]].value = 100;
+            }
+            while (mi > 0) {
+                singleStatus = singleStatus.substr(mi + 1);
+                value = std::stof(singleStatus);
+                advancedSettings[controlNames[controlCounter] + modifierNames[modifierCounter]].value = value;
+                modifierCounter++;
+                mi = singleStatus.find(':');
+            }
+            statusString = statusString.substr(si + 1);
+            si = statusString.find(',', 0);
+            controlCounter++;
+        }
+        readCount = 0;
+    }
+
+    void parseConfig() {
         controlNames.clear();
         modifierNames.clear();
         advancedSettings.clear();
         std::string configValues = readString("config") + ',';
-        std::string statusString = readString("status") + ',';
         std::string modifierString;
         int8_t ci = configValues.find(',', 0);
-        int8_t si = statusString.find(',', 0);
         while (ci > 0) {
-            std::string single = configValues.substr(0, ci);
-            std::string singleStatus = statusString.substr(0, si);
-            u8_t j = single.find('(');
-            u8_t k = single.find('/');
-            u8_t l = single.find(')');
-
-            std::string name = single.substr(0, j);
+            std::string singleConfig = configValues.substr(0, ci);
+            u8_t j = singleConfig.find('(');
+            u8_t k = singleConfig.find('/');
+            u8_t l = singleConfig.find(')');
+            std::string name = singleConfig.substr(0, j);
             controlNames.push_back(name);
-
-            float value = std::stof(singleStatus);
-            ESP_LOGI(TAG, "String: %s, Value: %f", singleStatus.c_str(), value);
-            u8_t minValue = std::stoi(single.substr(j + 1, k));
-            u8_t maxValue = std::stoi(single.substr(k + 1, l));
-            Control newControl = {value, minValue, maxValue};
-
+            u8_t minValue = std::stoi(singleConfig.substr(j + 1, k));
+            u8_t maxValue = std::stoi(singleConfig.substr(k + 1, l));
+            Control newControl = {float(minValue), minValue, maxValue};
             advancedSettings.emplace(name, newControl);
-
-            int8_t mi = single.find(':');
+            int8_t mi = singleConfig.find(':');
             if (mi > 0) {
-                modifierString = single.substr(l + 2) + ':';
+                modifierString = singleConfig.substr(l + 2) + ':';
             }
             mi = modifierString.find(':');
             std::string iterString = modifierString;
@@ -314,29 +335,45 @@ class OSSMAdvanced : public Device {
                 }
                 newControl.minValue = std::stoi(iterString.substr(j + 1, k));
                 newControl.maxValue = std::stoi(iterString.substr(k + 1, l));
-                int8_t ms = singleStatus.find(':');
-                if (ms > 0) {
-                    singleStatus = singleStatus.substr(ms + 1);
-                    newControl.value = std::stof(singleStatus);
-                } else {
-                    newControl.value = newControl.minValue;
-                    if (modifierName == modifierNames[0]) {
-                        newControl.value = newControl.maxValue;
-                    }
+                newControl.value = newControl.minValue;
+                if (modifierName == modifierNames[0]) {
+                    newControl.value = newControl.maxValue;
                 }
                 advancedSettings.emplace(name + modifierName, newControl);
-
                 iterString = iterString.substr(mi + 1);
                 mi = iterString.find(':');
             }
-
             configValues = configValues.substr(ci + 1);
-            statusString = statusString.substr(si + 1);
             ci = configValues.find(',', 0);
-            si = statusString.find(',', 0);
         }
-        controlNames.pop_back();
+    }
 
+    void dirtyRunner() {
+        while (true) {
+            if (readCount > 0) {
+                parseStatus();
+                syncRightEncoder();
+                syncLeftEncoder();
+                if (stateMachine->is("device_menu"_s)) {
+                    for (uint8_t i = 0; i < modifierNames.size(); i++) {
+                        buttons[i]->setText(String(int(advancedSettings[controlNames[baseIndex] + modifierNames[i]].value)));
+                    }
+                    drawModifierDisplay();
+                } else {
+                    for (int i = 0; i < controlNames.size() - 1; i++) {
+                        buttons[i]->setText(String(int(advancedSettings[controlNames[i]].value)));
+                    }
+                    drawCurveDisplay();
+                }
+            }
+            vTaskDelay(100);
+        }
+        vTaskDelete(NULL);
+    }
+
+    void onConnect() override {
+        parseConfig();
+        parseStatus();
         menu.clear();
         settingsMenu.clear();
         this->menu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, "placeholder", nullptr, "placeholder", .metaIndex = 0});
@@ -344,6 +381,9 @@ class OSSMAdvanced : public Device {
 
         isConnected = true;
         isFirstConnect = false;
+
+        auto task = [](void *arg) { static_cast<OSSMAdvanced *>(arg)->dirtyRunner(); };
+        xTaskCreatePinnedToCore(task, "dirtyRunner", 5 * configMINIMAL_STACK_SIZE, device, 5, NULL, 1);
     }
 
     void onPause(bool fullStop = false) override {
@@ -467,6 +507,7 @@ class OSSMAdvanced : public Device {
             return true;
         }
         edit->value = speed;
+        readCount = -2;
         return send("control", std::string("6:") + std::to_string(speed) + ",");
     }
 
@@ -479,6 +520,7 @@ class OSSMAdvanced : public Device {
         }
         edit->value = value;
         drawModifierDisplay();
+        readCount = -2;
         return send("control", std::to_string(baseIndex) + ":" + std::to_string(modifierIndex) + ":" + std::to_string(value) + ",");
     }
 
@@ -496,6 +538,7 @@ class OSSMAdvanced : public Device {
             advancedSettings[controlNames[0]].minValue = value;
         }
         drawCurveDisplay();
+        readCount = -2;
         return send("control", std::to_string(baseIndex) + ":" + std::to_string(value) + ",");
     }
 
@@ -522,7 +565,7 @@ class OSSMAdvanced : public Device {
             modifierIndex = (modifierIndex + modifierNames.size() - 1) % modifierNames.size();
             drawModifierDisplay();
         } else {
-            baseIndex = (baseIndex + controlNames.size() - 1) % controlNames.size();
+            baseIndex = (baseIndex + controlNames.size() - 2) % (controlNames.size() - 1);
             modifierIndex = 0;
             drawCurveDisplay();
         }
@@ -535,7 +578,7 @@ class OSSMAdvanced : public Device {
             modifierIndex = (modifierIndex + 1) % modifierNames.size();
             drawModifierDisplay();
         } else {
-            baseIndex = (baseIndex + 1) % controlNames.size();
+            baseIndex = (baseIndex + 1) % (controlNames.size() - 1);
             modifierIndex = 0;
             drawCurveDisplay();
         }
@@ -563,7 +606,7 @@ class OSSMAdvanced : public Device {
 
   private:
     void updateTabAppearance() {
-        for (int i = 0; i < controlNames.size(); i++) {
+        for (int i = 0; i < controlNames.size() - 1; i++) {
             buttons[i]->setColors(Colors::disabled, Colors::black);
         }
         int index = baseIndex;

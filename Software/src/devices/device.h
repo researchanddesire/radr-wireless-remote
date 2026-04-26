@@ -96,6 +96,7 @@ class Device : public NimBLEClientCallbacks {
 
     virtual void drawControls() {}
     virtual void drawDeviceMenu();
+    virtual void drawDeviceSettingsMenu();
 
     virtual void pullValue() {}
     virtual void pushValue() {}
@@ -106,8 +107,7 @@ class Device : public NimBLEClientCallbacks {
     // Display object helpers
     template <typename TDisplayObject, typename... TArgs>
     TDisplayObject *draw(TArgs &&...args) {
-        auto uniquePtr =
-            std::make_unique<TDisplayObject>(std::forward<TArgs>(args)...);
+        auto uniquePtr = std::make_unique<TDisplayObject>(std::forward<TArgs>(args)...);
         TDisplayObject *rawPtr = uniquePtr.get();
         displayObjects.emplace_back(std::move(uniquePtr));
         return rawPtr;
@@ -129,8 +129,7 @@ class Device : public NimBLEClientCallbacks {
 
     // Helper method to safely read JSON values
     template <typename T>
-    T readJsonValue(const std::string &characteristicName, const char *key,
-                    T defaultValue) {
+    T readJsonValue(const std::string &characteristicName, const char *key, T defaultValue) {
         auto value = readString(characteristicName);
         JsonDocument doc;
         DeserializationError error = deserializeJson(doc, value.c_str());
@@ -149,8 +148,7 @@ class Device : public NimBLEClientCallbacks {
     }
 
     template <typename T = JsonObject>
-    bool readJson(const std::string &command,
-                  std::function<void(const T &)> callback) {
+    bool readJson(const std::string &command, std::function<void(const T &)> callback) {
         auto value = readString(command);
         JsonDocument doc;
         DeserializationError error = deserializeJson(doc, value.c_str());

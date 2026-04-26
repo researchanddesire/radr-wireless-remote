@@ -4,9 +4,8 @@
 #include <components/DynamicText.h>
 #include <components/TextButton.h>
 #include <devices/device.h>
-#include <pins.h>
-#include <services/encoder.h>
 #include <services/coms.h>
+#include <services/encoder.h>
 #include <state/remote.h>
 
 #include "displayUtils.h"
@@ -25,8 +24,7 @@ static const int scrollWidth = 6;
 
 using namespace sml;
 
-static const int menuWidth =
-    Display::WIDTH - scrollWidth - Display::Padding::P1 * 2;
+static const int menuWidth = Display::WIDTH - scrollWidth - Display::Padding::P1 * 2;
 static const int menuItemHeight = Display::Icons::Small + Display::Padding::P2;
 static const int menuItemDescriptionHeight = menuItemHeight * 1.5;
 
@@ -45,11 +43,9 @@ void drawTabBar() {
 
         // OSSM tab (left)
         bool ossmActive = (activeTab == 0);
-        tft.fillRect(0, tabY, tabWidth, tabHeight,
-                     ossmActive ? Colors::bgGray900 : Colors::black);
+        tft.fillRect(0, tabY, tabWidth, tabHeight, ossmActive ? Colors::bgGray900 : Colors::black);
         tft.setFont(&FreeSans9pt7b);
-        tft.setTextColor(ossmActive ? Colors::textForeground
-                                    : Colors::disabled);
+        tft.setTextColor(ossmActive ? Colors::textForeground : Colors::disabled);
         // Center "OSSM" text in left half
         int16_t x1, y1;
         uint16_t tw, th;
@@ -59,13 +55,10 @@ void drawTabBar() {
 
         // RADR tab (right)
         bool radrActive = (activeTab == 1);
-        tft.fillRect(tabWidth, tabY, tabWidth, tabHeight,
-                     radrActive ? Colors::bgGray900 : Colors::black);
-        tft.setTextColor(radrActive ? Colors::textForeground
-                                    : Colors::disabled);
+        tft.fillRect(tabWidth, tabY, tabWidth, tabHeight, radrActive ? Colors::bgGray900 : Colors::black);
+        tft.setTextColor(radrActive ? Colors::textForeground : Colors::disabled);
         tft.getTextBounds("RADR", 0, 0, &x1, &y1, &tw, &th);
-        tft.setCursor(tabWidth + (tabWidth - tw) / 2,
-                      tabY + tabHeight / 2 + th / 2);
+        tft.setCursor(tabWidth + (tabWidth - tw) / 2, tabY + tabHeight / 2 + th / 2);
         tft.print("RADR");
 
         xSemaphoreGive(displayMutex);
@@ -82,8 +75,7 @@ void drawMenuWithTabs() {
         drawTabBar();
 
         if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-            int placeholderY =
-                Display::StatusbarHeight + tabBarHeight + Display::PageHeight / 3;
+            int placeholderY = Display::StatusbarHeight + tabBarHeight + Display::PageHeight / 3;
             tft.setFont(&FreeSans9pt7b);
             tft.setTextColor(Colors::disabled);
             int16_t x1, y1;
@@ -99,13 +91,11 @@ void drawMenuWithTabs() {
     drawMenu();
 }
 
-static void drawMenuItem(int index, const MenuItem &option,
-                         bool selected = false) {
+static void drawMenuItem(int index, const MenuItem &option, bool selected = false) {
     auto text = option.name;
     auto bitmap = option.bitmap;
     auto color = option.color > 0 ? option.color : Colors::textForeground;
-    auto unfocusedColor = option.unfocusedColor > 0 ? option.unfocusedColor
-                                                    : Colors::textBackground;
+    auto unfocusedColor = option.unfocusedColor > 0 ? option.unfocusedColor : Colors::textBackground;
 
     int y = Display::StatusbarHeight + Display::Padding::P1 + menuYOffset + tabBarHeight;
     int x = Display::Padding::P1;
@@ -117,16 +107,11 @@ static void drawMenuItem(int index, const MenuItem &option,
         tft.fillRect(x, y, menuWidth, menuItemHeight, Colors::black);
 
         if (index > 0) {
-            tft.drawFastHLine(x + Display::Padding::P1, y,
-                              menuWidth - Display::Padding::P2,
-                              Colors::bgGray900);
+            tft.drawFastHLine(x + Display::Padding::P1, y, menuWidth - Display::Padding::P2, Colors::bgGray900);
         }
 
         if (selected) {
-            tft.fillRoundRect(x, y, menuWidth,
-                              shouldDrawDescription ? menuItemDescriptionHeight
-                                                    : menuItemHeight,
-                              3, Colors::bgGray900);
+            tft.fillRoundRect(x, y, menuWidth, shouldDrawDescription ? menuItemDescriptionHeight : menuItemHeight, 3, Colors::bgGray900);
         }
 
         tft.setTextColor(selected ? color : unfocusedColor);
@@ -135,8 +120,7 @@ static void drawMenuItem(int index, const MenuItem &option,
         int padding = Display::Padding::P2;
         int textOffset = 6;
 
-        tft.drawBitmap(x + padding, y + textOffset, bitmap,
-                       Display::Icons::Small, Display::Icons::Small,
+        tft.drawBitmap(x + padding, y + textOffset, bitmap, Display::Icons::Small, Display::Icons::Small,
                        selected ? color : unfocusedColor);
 
         padding += Display::Icons::Small + Display::Padding::P2;
@@ -149,13 +133,11 @@ static void drawMenuItem(int index, const MenuItem &option,
 
             wrapText(tft, option.description.value().c_str(),
                      {.x = x + Display::Padding::P2,
-                      .y = y + textOffset + Display::Icons::Small +
-                           Display::Padding::P0,
+                      .y = y + textOffset + Display::Icons::Small + Display::Padding::P0,
                       .rightPadding = Display::Padding::P3});
         }
 
-        menuYOffset +=
-            shouldDrawDescription ? menuItemDescriptionHeight : menuItemHeight;
+        menuYOffset += shouldDrawDescription ? menuItemDescriptionHeight : menuItemHeight;
 
         xSemaphoreGive(displayMutex);
     }
@@ -165,7 +147,7 @@ void drawMenuFrame() {
     int numOptions = activeMenuCount;
     const MenuItem *options = activeMenu->data();
 
-    // Since wrap-around is disabled, currentOption should always be within bounds
+    // Since wrap-around is disabled, currentOption should always be within
     // Just clamp it as a safety measure
     int safeCurrentOption = currentOption;
     if (safeCurrentOption < 0) safeCurrentOption = 0;
@@ -210,10 +192,9 @@ static void updateLeftEncoderValue(const std::string &label, int value) {
 
 static void createEncoderDisplayObject() {
     if (device != nullptr && encoderDisplayNeedsCreation) {
-        device->draw<DynamicText>(
-            encoderDisplayText,    // reference to persistent string
-            Display::Padding::P1,  // x position
-            Display::StatusbarHeight - Display::Padding::P1  // y position
+        device->draw<DynamicText>(encoderDisplayText,                              // reference to persistent string
+                                  Display::Padding::P1,                            // x position
+                                  Display::StatusbarHeight - Display::Padding::P1  // y position
         );
         encoderDisplayNeedsCreation = false;
     }
@@ -223,9 +204,8 @@ void drawMenuTask(void *pvParameters) {
     int lastEncoderValue = -1;
 
     auto isInCorrectState = []() {
-        return stateMachine->is("main_menu"_s) ||
-               stateMachine->is("settings_menu"_s) ||
-               stateMachine->is("device_menu"_s);
+        return stateMachine->is("main_menu"_s) || stateMachine->is("settings_menu"_s) || stateMachine->is("device_menu"_s) ||
+               stateMachine->is("device_settings_menu"_s);
     };
 
     auto isInNestedState = []() { return stateMachine->is("device_menu"_s); };
@@ -234,8 +214,7 @@ void drawMenuTask(void *pvParameters) {
     menuTaskHandle = xTaskGetCurrentTaskHandle();
 
     // Mark encoder display as needing creation for device menu
-    if (device != nullptr && stateMachine->is("device_menu"_s) &&
-        device->needsPersistentLeftEncoderMonitoring()) {
+    if (device != nullptr && stateMachine->is("device_menu"_s) && device->needsPersistentLeftEncoderMonitoring()) {
         encoderDisplayNeedsCreation = true;
     }
 
@@ -271,9 +250,7 @@ void drawMenuTask(void *pvParameters) {
     bool lastLeftShoulderState = HIGH;
     bool lastRightShoulderState = HIGH;
 
-    auto isInMainMenu = []() {
-        return stateMachine->is("main_menu"_s);
-    };
+    auto isInMainMenu = []() { return stateMachine->is("main_menu"_s); };
 
     while (isInCorrectState() && !menuTaskExitRequested) {
         // Shoulder button polling for tab switching (main_menu only)
@@ -282,8 +259,7 @@ void drawMenuTask(void *pvParameters) {
             bool curRightShoulder = digitalRead(pins::BTN_R_SHOULDER);
 
             bool shouldToggle =
-                (curLeftShoulder == LOW && lastLeftShoulderState == HIGH) ||
-                (curRightShoulder == LOW && lastRightShoulderState == HIGH);
+                (curLeftShoulder == LOW && lastLeftShoulderState == HIGH) || (curRightShoulder == LOW && lastRightShoulderState == HIGH);
 
             if (shouldToggle) {
                 activeTab = (activeTab == 0) ? 1 : 0;
@@ -311,17 +287,13 @@ void drawMenuTask(void *pvParameters) {
                     drawMenuFrame();
                 } else {
                     // No OSSM connected placeholder
-                    if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(50)) ==
-                        pdTRUE) {
-                        int placeholderY =
-                            Display::StatusbarHeight + tabBarHeight +
-                            Display::PageHeight / 3;
+                    if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                        int placeholderY = Display::StatusbarHeight + tabBarHeight + Display::PageHeight / 3;
                         tft.setFont(&FreeSans9pt7b);
                         tft.setTextColor(Colors::disabled);
                         int16_t x1, y1;
                         uint16_t tw, th;
-                        tft.getTextBounds("No OSSM connected", 0, 0, &x1, &y1,
-                                          &tw, &th);
+                        tft.getTextBounds("No OSSM connected", 0, 0, &x1, &y1, &tw, &th);
                         tft.setCursor((Display::WIDTH - tw) / 2, placeholderY);
                         tft.print("No OSSM connected");
                         xSemaphoreGive(displayMutex);
@@ -343,16 +315,14 @@ void drawMenuTask(void *pvParameters) {
         bool shouldUpdateLeftEncoderValue = false;
         int currentLeftEncoderValue = 0;
 
-        if (isInNestedState() && device != nullptr &&
-            device->needsPersistentLeftEncoderMonitoring()) {
+        if (isInNestedState() && device != nullptr && device->needsPersistentLeftEncoderMonitoring()) {
             currentLeftEncoderValue = device->getCurrentLeftEncoderValue();
 
             // Create display object on first entry
             createEncoderDisplayObject();
 
             // Force display on first entry or when left encoder value changes
-            if (isFirstDeviceMenuEntry ||
-                currentLeftEncoderValue != lastLeftEncoderValue) {
+            if (isFirstDeviceMenuEntry || currentLeftEncoderValue != lastLeftEncoderValue) {
                 lastLeftEncoderValue = currentLeftEncoderValue;
                 shouldUpdateLeftEncoderValue = true;
                 isFirstDeviceMenuEntry = false;
@@ -362,8 +332,7 @@ void drawMenuTask(void *pvParameters) {
             isFirstDeviceMenuEntry = true;
         }
 
-        if (lastEncoderValue == currentOption &&
-            !shouldUpdateLeftEncoderValue) {
+        if (lastEncoderValue == currentOption && !shouldUpdateLeftEncoderValue) {
             // No changes needed, just tick display objects
         } else {
             if (lastEncoderValue != currentOption) {
@@ -372,8 +341,7 @@ void drawMenuTask(void *pvParameters) {
             }
 
             if (shouldUpdateLeftEncoderValue) {
-                updateLeftEncoderValue(device->getLeftEncoderParameterName(),
-                                       currentLeftEncoderValue);
+                updateLeftEncoderValue(device->getLeftEncoderParameterName(), currentLeftEncoderValue);
             }
         }
 
@@ -398,10 +366,8 @@ void drawMenu() {
         menuTaskExitRequested = true;
         // Reduced timeout for faster transitions
         const TickType_t waitStart = xTaskGetTickCount();
-        const TickType_t waitTimeout =
-            pdMS_TO_TICKS(50);  // Reduced from 200ms to 50ms
-        while (menuTaskHandle != NULL &&
-               (xTaskGetTickCount() - waitStart) < waitTimeout) {
+        const TickType_t waitTimeout = pdMS_TO_TICKS(50);  // Reduced from 200ms to 50ms
+        while (menuTaskHandle != NULL && (xTaskGetTickCount() - waitStart) < waitTimeout) {
             vTaskDelay(1);
         }
         // If still not null after timeout, force cleanup
@@ -420,9 +386,7 @@ void drawMenu() {
     clearPage();
     // Reduced delay for faster startup
     vTaskDelay(10 / portTICK_PERIOD_MS);  // Reduced from 50ms to 10ms
-    xTaskCreatePinnedToCore(drawMenuTask, "drawMenuTask",
-                            5 * configMINIMAL_STACK_SIZE, NULL, 5,
-                            &menuTaskHandle, 1);
+    xTaskCreatePinnedToCore(drawMenuTask, "drawMenuTask", 5 * configMINIMAL_STACK_SIZE, NULL, 5, &menuTaskHandle, 1);
 }
 
 // Device list management
@@ -433,54 +397,38 @@ static volatile bool deviceListTaskExitRequested = false;
 
 void buildDeviceListMenu() {
     deviceListMenu.clear();
-    
-    auto& devices = getDiscoveredDevices();
-    
+
+    auto &devices = getDiscoveredDevices();
+
     if (devices.empty()) {
         // Add a "No devices found" placeholder
-        deviceListMenu.push_back({
-            MenuItemE::DEVICE_MENU_ITEM,
-            "No devices found",
-            bitmap_ble_connect,
-            std::nullopt,
-            Colors::textForegroundSecondary,
-            Colors::textForegroundSecondary,
-            -1
-        });
+        deviceListMenu.push_back({MenuItemE::DEVICE_MENU_ITEM, "No devices found", bitmap_ble_connect, std::nullopt,
+                                  Colors::textForegroundSecondary, Colors::textForegroundSecondary, -1});
     } else {
         for (size_t i = 0; i < devices.size(); i++) {
             std::string displayName = devices[i].name;
             if (displayName.empty()) {
                 displayName = "Unknown Device";
             }
-            
+
             // Add RSSI indicator
             // displayName += " (" + std::to_string(devices[i].rssi) + " dBm)";
-            
-            deviceListMenu.push_back({
-                MenuItemE::DEVICE_MENU_ITEM,
-                displayName,
-                bitmap_ble_connect,
-                std::nullopt,
-                Colors::textForeground,
-                Colors::textBackground,
-                static_cast<int>(i)
-            });
+
+            deviceListMenu.push_back({MenuItemE::DEVICE_MENU_ITEM, displayName, bitmap_ble_connect, std::nullopt, Colors::textForeground,
+                                      Colors::textBackground, static_cast<int>(i)});
         }
     }
-    
+
     deviceListCount = deviceListMenu.size();
 }
 
 void drawDeviceListTask(void *pvParameters) {
     int lastEncoderValue = -1;
-    
-    auto isInCorrectState = []() {
-        return stateMachine->is("device_list"_s);
-    };
-    
+
+    auto isInCorrectState = []() { return stateMachine->is("device_list"_s); };
+
     deviceListTaskHandle = xTaskGetCurrentTaskHandle();
-    
+
     bool initialized = false;
     while (!initialized) {
         if (isInCorrectState()) {
@@ -492,23 +440,23 @@ void drawDeviceListTask(void *pvParameters) {
         }
         vTaskDelay(1);
     }
-    
+
     while (isInCorrectState() && !deviceListTaskExitRequested) {
         int rawEncoderValue = rightEncoder.readEncoder();
         currentOption = rawEncoderValue;
-        
+
         if (lastEncoderValue != currentOption) {
             lastEncoderValue = currentOption;
-            
+
             // Redraw menu with updated selection
             activeMenu = &deviceListMenu;
             activeMenuCount = deviceListCount;
             drawMenuFrame();
         }
-        
+
         vTaskDelay(16 / portTICK_PERIOD_MS);
     }
-    
+
     deviceListTaskHandle = NULL;
     vTaskDelete(NULL);
 }
@@ -519,8 +467,7 @@ void drawDeviceListMenu() {
         deviceListTaskExitRequested = true;
         const TickType_t waitStart = xTaskGetTickCount();
         const TickType_t waitTimeout = pdMS_TO_TICKS(50);
-        while (deviceListTaskHandle != NULL &&
-               (xTaskGetTickCount() - waitStart) < waitTimeout) {
+        while (deviceListTaskHandle != NULL && (xTaskGetTickCount() - waitStart) < waitTimeout) {
             vTaskDelay(1);
         }
         if (deviceListTaskHandle != NULL) {
@@ -529,19 +476,19 @@ void drawDeviceListMenu() {
             deviceListTaskHandle = NULL;
         }
     }
-    
+
     deviceListTaskExitRequested = false;
-    
+
     ESP_LOGD("DEVICE_LIST", "Drawing device list");
-    
+
     // Build the menu from discovered devices
     buildDeviceListMenu();
-    
+
     // Set active menu
     activeMenu = &deviceListMenu;
     activeMenuCount = deviceListCount;
     currentOption = 0;
-    
+
     clearPage();
     vTaskDelay(10 / portTICK_PERIOD_MS);
 
@@ -552,7 +499,5 @@ void drawDeviceListMenu() {
     TextButton retryButton(RETRY_STRING, pins::BTN_UNDER_C, (Display::WIDTH - 70) / 2, buttonY);
     retryButton.tick();
 
-    xTaskCreatePinnedToCore(drawDeviceListTask, "drawDeviceListTask",
-                            5 * configMINIMAL_STACK_SIZE, NULL, 5,
-                            &deviceListTaskHandle, 1);
+    xTaskCreatePinnedToCore(drawDeviceListTask, "drawDeviceListTask", 5 * configMINIMAL_STACK_SIZE, NULL, 5, &deviceListTaskHandle, 1);
 }

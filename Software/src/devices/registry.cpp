@@ -5,6 +5,7 @@
 #include <LittleFS.h>
 
 #include "buttplugio/buttplugIOFactory.h"
+#include "kinkymakers/ossm/advancedPenetration.hpp"
 #include "lovense/LovenseDevice.hpp"
 #include "lovense/data.hpp"
 #include "lovense/domi/domi_device.hpp"
@@ -15,10 +16,12 @@ static const char *REGISTRY_TAG = "REGISTRY";
 
 // Define the global registry
 std::unordered_map<std::string, DeviceFactory> registry;
+std::unordered_map<std::string, std::string> registryNames;
 
 void initRegistry() {
     // Clear any existing entries
     registry.clear();
+    registryNames.clear();
 
     // Known explicit services
     registry.emplace(
@@ -26,6 +29,13 @@ void initRegistry() {
         [](const NimBLEAdvertisedDevice *advertisedDevice) -> Device * {
             return new OSSM(advertisedDevice);
         });
+    registryNames.emplace(OSSM_SERVICE_ID, OSSM_SERVICE_NAME);
+    registry.emplace(
+        OSSM_ADVANCED_SERVICE_ID,
+        [](const NimBLEAdvertisedDevice *advertisedDevice) -> Device * {
+            return new OSSMAdvanced(advertisedDevice);
+        });
+    registryNames.emplace(OSSM_ADVANCED_SERVICE_ID, OSSM_ADVANCED_SERVICE_NAME);
 
     // Try to read registry.json from LittleFS
     if (LittleFS.exists("/registry.json")) {
@@ -93,4 +103,24 @@ const DeviceFactory *getDeviceFactory(const NimBLEUUID &serviceUUID) {
     }
 
     return &it->second;
+}
+
+const std::string getDeviceName(const NimBLEUUID &serviceUUID,
+                                std::string defaultName) {
+    ESP_LOGI(REGISTRY_TAG, "Getting device name for service UUID: %s",
+             serviceUUID.toString().c_str());
+    // Convert NimBLEUUID to Uppercase std::string for lookup
+    std::string uuidStr = serviceUUID.toString().c_str();
+    std::transform(uuidStr.begin(), uuidStr.end(), uuidStr.begin(), ::toupper);
+
+    auto it = registryNames.find(uuidStr);
+
+    if (it == registryNames.end()) {
+        // TODO: Manage this better. Send the user to an error screen.
+        ESP_LOGI(REGISTRY_TAG, "No device name found for service UUID: %s",
+                 serviceUUID.toString().c_str());
+        return defaultName;
+    }
+
+    return it->second;
 }

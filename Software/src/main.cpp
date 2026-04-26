@@ -40,10 +40,6 @@ void resetMiddleButtonCounter() { middleButtonPressCount = 0; }
 void setup() {
     Serial.begin(115200);
 
-#ifdef DEBUG
-    delay(5000);
-#endif
-
     // Version 1.x of the PCB Boards cannot use PSRAM
     if (psramInit()) {
         ESP_LOGI(TAG, "PSRAM initialized");

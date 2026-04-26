@@ -31,11 +31,13 @@ class ScanCallbacks : public NimBLEScanCallbacks {
         // get all service UUIDs
         const DeviceFactory *factory = nullptr;
         auto countOfServiceUUIDs = advertisedDevice->getServiceUUIDCount();
+        ESP_LOGI("DEBUG_FOLLOWER", "Service Count: %s",
+                 String(countOfServiceUUIDs));
         for (int i = 0; i < countOfServiceUUIDs; i++) {
             vTaskDelay(1);
             auto serviceUUID = advertisedDevice->getServiceUUID(i);
 
-            auto name = advertisedDevice->getName();
+            auto name = getDeviceName(serviceUUID, advertisedDevice->getName());
 
             // print the service UUID and name
             ESP_LOGI("DEBUG_FOLLOWER", "Service UUID: %s, Name: %s",
@@ -47,34 +49,19 @@ class ScanCallbacks : public NimBLEScanCallbacks {
             if (factory != nullptr) {
                 ESP_LOGI("DEBUG_FOLLOWER", "Found factory for service UUID: %s",
                          serviceUUID.toString().c_str());
-                break;
+
+                // Add new device to list
+                DiscoveredDevice newDevice;
+                newDevice.advertisedDevice = advertisedDevice;
+                newDevice.factory = factory;
+                newDevice.name = name.c_str();
+                newDevice.rssi = advertisedDevice->getRSSI();
+                discoveredDevices.push_back(newDevice);
+
+                ESP_LOGI(TAG_COMS, "Found device: %s (RSSI: %d)",
+                         newDevice.name.c_str(), newDevice.rssi);
             }
         }
-
-        if (!factory) {
-            return;
-        }
-
-        // Check if device already exists in list (by address)
-        std::string address = advertisedDevice->getAddress().toString();
-        for (auto &dev : discoveredDevices) {
-            if (dev.advertisedDevice->getAddress().toString() == address) {
-                // Update RSSI if device already in list
-                dev.rssi = advertisedDevice->getRSSI();
-                return;
-            }
-        }
-
-        // Add new device to list
-        DiscoveredDevice newDevice;
-        newDevice.advertisedDevice = advertisedDevice;
-        newDevice.factory = factory;
-        newDevice.name = advertisedDevice->getName().c_str();
-        newDevice.rssi = advertisedDevice->getRSSI();
-        discoveredDevices.push_back(newDevice);
-
-        ESP_LOGI(TAG_COMS, "Found device: %s (RSSI: %d)",
-                 newDevice.name.c_str(), newDevice.rssi);
 
         return;
     }

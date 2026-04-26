@@ -68,7 +68,7 @@ class OSSMAdvanced : public Device {
 
     float getMaxSteps() {
         uint8_t maxSteps = 4;
-        for (auto controlName : controlNames) {
+        for (std::string controlName : controlNames) {
             uint8_t modSteps = 0;
             for (u_int8_t m = 1; m < controlNames.size() - 2; m++) {
                 modSteps += advancedSettings[controlName + modifierNames[m]].value;
@@ -311,7 +311,7 @@ class OSSMAdvanced : public Device {
             u8_t k = singleConfig.find('/');
             u8_t l = singleConfig.find(')');
             std::string name = singleConfig.substr(0, j);
-            controlNames.push_back(name);
+            controlNames.emplace_back(name);
             u8_t minValue = std::stoi(singleConfig.substr(j + 1, k));
             u8_t maxValue = std::stoi(singleConfig.substr(k + 1, l));
             Control newControl = {float(minValue), minValue, maxValue};
@@ -328,7 +328,7 @@ class OSSMAdvanced : public Device {
                 l = iterString.find(')');
                 std::string modifierName = iterString.substr(0, j);
                 if (std::find(modifierNames.begin(), modifierNames.end(), modifierName) == modifierNames.end()) {
-                    modifierNames.push_back(modifierName);
+                    modifierNames.emplace_back(modifierName);
                 }
                 newControl.minValue = std::stoi(iterString.substr(j + 1, k));
                 newControl.maxValue = std::stoi(iterString.substr(k + 1, l));
@@ -378,12 +378,12 @@ class OSSMAdvanced : public Device {
         int8_t pi = presetList.find(',', 0);
         while (pi > 0) {
             std::string presetName = presetList.substr(0, pi);
-            this->settingsMenu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, presetName, researchAndDesireWaves});
+            this->settingsMenu.emplace_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, presetName, researchAndDesireWaves});
 
             presetList = presetList.substr(pi + 1);
             pi = presetList.find(',', 0);
         }
-        this->settingsMenu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, "Save New Preset", researchAndDesireWaves});
+        this->settingsMenu.emplace_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, "Save New Preset", researchAndDesireWaves});
     }
 
     static void runDirtyRunnerTask(void *pvParameters) { static_cast<OSSMAdvanced *>(pvParameters)->dirtyRunner(); }
@@ -394,7 +394,7 @@ class OSSMAdvanced : public Device {
 
         loadPresets();
         menu.clear();
-        this->menu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, "placeholder", nullptr, "placeholder"});
+        this->menu.emplace_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, "placeholder", nullptr, "placeholder"});
 
         isConnected = true;
         isFirstConnect = false;
@@ -498,6 +498,19 @@ class OSSMAdvanced : public Device {
             }
             parseStatus();
         }
+    }
+
+    void drawDeviceSettingsMenu() override {
+        device->displayObjects.clear();
+        activeMenu = &settingsMenu;
+        activeMenuCount = settingsMenu.size();
+        drawMenu();
+        TextButton back("Back", pins::BTN_UNDER_L, -5, Display::HEIGHT - 25, 90, 30);
+        TextButton select("Select", pins::BTN_UNDER_R, DISPLAY_WIDTH - 85, Display::HEIGHT - 25, 90, 30);
+        pauseStopButton = draw<TextButton>("Pause", pins::BTN_UNDER_C, DISPLAY_WIDTH / 2 - 60, Display::HEIGHT - 25, 120, 30);
+        back.tick();
+        select.tick();
+        pauseStopButton->tick();
     }
 
     void drawDeviceMenu() override {

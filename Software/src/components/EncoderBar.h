@@ -46,13 +46,12 @@ class EncoderBar : public DisplayObject {
         : DisplayObject(props.pos_x, props.pos_y, props.w, props.h),
           value(props.value),
           color(ST77XX_WHITE),
-          encoder(*props.encoder),
+          minValue(props.minValue),
+          maxValue(props.maxValue),
           mapToLeftLed(props.mapToLeftLed),
           mapToRightLed(props.mapToRightLed),
-          minValue(props.minValue),
-          maxValue(props.maxValue) {
-        canvas = std::make_unique<GFXcanvas16>(props.w, props.h);
-    }
+          encoder(*props.encoder),
+          canvas(std::make_unique<GFXcanvas16>(props.w, props.h)) {}
 
     void setValue(float *newValue) {
         value = newValue;

@@ -18,7 +18,8 @@ extern void resetMiddleButtonCounter();
 
 #define CHARACTERISTIC_ADVANCED_STATUS_UUID "4F53534D-6164-7661-6E63-656473746174"
 #define CHARACTERISTIC_ADVANCED_CONFIG_UUID "4F53534D-6164-7661-6E63-6564636F6E66"
-#define CHARACTERISTIC_ADVANCED_CONTROL_UUID "4F53534D-6164-7661-6E63-6564636F6D6D"
+#define CHARACTERISTIC_ADVANCED_CONTROL_UUID "4F53534D-6164-7661-6E63-6564636F6E74"
+#define CHARACTERISTIC_ADVANCED_PRESETS_UUID "4F53534D-6164-7661-6E63-656470727374"
 
 struct Control {
     float value;
@@ -52,10 +53,13 @@ class OSSMAdvanced : public Device {
     EncoderBar *valueBar = nullptr;
 
     explicit OSSMAdvanced(const NimBLEAdvertisedDevice *advertisedDevice) : Device(advertisedDevice) {
-        characteristics = {{"control", {NimBLEUUID(CHARACTERISTIC_ADVANCED_CONTROL_UUID)}},
-                           {"config", {NimBLEUUID(CHARACTERISTIC_ADVANCED_CONFIG_UUID)}},
-                           {"status", DeviceCharacteristics{NimBLEUUID(CHARACTERISTIC_ADVANCED_STATUS_UUID), .notifyCallback = [this](NimBLERemoteCharacteristic *pRemoteCharacteristic, uint8_t *pData,
-                                                                                                                                      size_t length, bool isNotify) { readCount++; }}}};
+        characteristics = {
+            {"control", {NimBLEUUID(CHARACTERISTIC_ADVANCED_CONTROL_UUID)}},
+            {"config", {NimBLEUUID(CHARACTERISTIC_ADVANCED_CONFIG_UUID)}},
+            {"presets", {NimBLEUUID(CHARACTERISTIC_ADVANCED_PRESETS_UUID)}},
+            {"status", DeviceCharacteristics{NimBLEUUID(CHARACTERISTIC_ADVANCED_STATUS_UUID),
+                                             .notifyCallback = [this](NimBLERemoteCharacteristic *pRemoteCharacteristic, uint8_t *pData,
+                                                                      size_t length, bool isNotify) { readCount++; }}}};
     }
 
     ~OSSMAdvanced() {
@@ -258,10 +262,17 @@ class OSSMAdvanced : public Device {
         rightEncoder.setAcceleration(50);
         draw<TextButton>("<<", pins::BTN_L_SHOULDER, -5, -5, 70, 30);
         draw<TextButton>(">>", pins::BTN_R_SHOULDER, DISPLAY_WIDTH - 65, -5, 70, 30);
-        speedBar = draw<EncoderBar>(EncoderBar::Props{.encoder = &leftEncoder, .value = &advancedSettings["SP"].value, .x = 0, .y = (int16_t)(Display::PageY + 35), .mapToLeftLed = true});
+        speedBar = draw<EncoderBar>(EncoderBar::Props{.encoder = &leftEncoder,
+                                                      .value = &advancedSettings["SP"].value,
+                                                      .x = 0,
+                                                      .y = (int16_t)(Display::PageY + 35),
+                                                      .mapToLeftLed = true});
         speedBar->setColor(Colors::speed);
-        valueBar = draw<EncoderBar>(EncoderBar::Props{
-            .encoder = &rightEncoder, .value = &advancedSettings[controlNames[0]].value, .x = (int16_t)(DISPLAY_WIDTH - 10), .y = (int16_t)(Display::PageY + 35), .mapToRightLed = true});
+        valueBar = draw<EncoderBar>(EncoderBar::Props{.encoder = &rightEncoder,
+                                                      .value = &advancedSettings[controlNames[0]].value,
+                                                      .x = (int16_t)(DISPLAY_WIDTH - 10),
+                                                      .y = (int16_t)(Display::PageY + 35),
+                                                      .mapToRightLed = true});
 
         pauseStopButton = draw<TextButton>("Pause", pins::BTN_UNDER_C, DISPLAY_WIDTH / 2 - 60, Display::HEIGHT - 25, 120, 30);
 
@@ -271,10 +282,12 @@ class OSSMAdvanced : public Device {
     }
 
     void drawControls() override {
+        device->displayObjects.clear();
         uint8_t totalGaps = (controlNames.size() - 2) * tabGap;
         uint8_t tabWidth = (DISPLAY_WIDTH - totalGaps) / (controlNames.size() - 1);
         for (uint8_t i = 0; i < controlNames.size() - 1; i++) {
-            buttons[i] = draw<TextButton>(String(int(advancedSettings[controlNames[i]].value)), NO_PIN, i * (tabWidth + tabGap), tabY, tabWidth, tabHeight);
+            buttons[i] = draw<TextButton>(String(int(advancedSettings[controlNames[i]].value)), NO_PIN, i * (tabWidth + tabGap), tabY,
+                                          tabWidth, tabHeight);
         }
 
         draw<TextButton>("Presets", pins::BTN_UNDER_L, -5, Display::HEIGHT - 25, 90, 30);
@@ -383,13 +396,27 @@ class OSSMAdvanced : public Device {
         vTaskDelete(NULL);
     }
 
+    void loadPresets() {
+        settingsMenu.clear();
+        std::string presetList = readString("presets");
+        int8_t pi = presetList.find(',', 0);
+        while (pi > 0) {
+            std::string presetName = presetList.substr(0, pi);
+            this->settingsMenu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, presetName, researchAndDesireWaves});
+
+            presetList = presetList.substr(pi + 1);
+            pi = presetList.find(',', 0);
+        }
+        this->settingsMenu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, "Save New Preset", researchAndDesireWaves});
+    }
+
     void onConnect() override {
         parseConfig();
         parseStatus();
+
+        loadPresets();
         menu.clear();
-        settingsMenu.clear();
         this->menu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, "placeholder", nullptr, "placeholder", .metaIndex = 0});
-        this->settingsMenu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, "placeholder", nullptr, "placeholder", .metaIndex = 0});
 
         isConnected = true;
         isFirstConnect = false;
@@ -483,23 +510,29 @@ class OSSMAdvanced : public Device {
         vTaskDelete(NULL);
     }
 
-    void drawDeviceSettingsMenu() override {
-        clearPage();
-
-        draw<TextButton>("Back", pins::BTN_UNDER_L, -5, Display::HEIGHT - 25, 90, 30);
-        draw<TextButton>("Select", pins::BTN_UNDER_R, DISPLAY_WIDTH - 85, Display::HEIGHT - 25, 90, 30);
-
-        drawCommonControls();
+    void onDeviceMenuItemSelected(int index) override {
+        if (activeMenu != nullptr) {
+            if (index < settingsMenu.size() - 1) {
+                std::string name = settingsMenu[index].name;
+                send("presets", ":" + name);
+            } else {
+                send("presets", ">");
+                loadPresets();
+            }
+            parseStatus();
+        }
     }
 
     void drawDeviceMenu() override {
+        activeMenu = nullptr;
         clearPage();
         device->displayObjects.clear();
 
         uint8_t totalGaps = (modifierNames.size() - 1) * tabGap;
         uint8_t tabWidth = (DISPLAY_WIDTH - totalGaps) / modifierNames.size();
         for (uint8_t i = 0; i < modifierNames.size(); i++) {
-            buttons[i] = draw<TextButton>(String(int(advancedSettings[controlNames[baseIndex] + modifierNames[i]].value)), NO_PIN, i * (tabWidth + tabGap), tabY, tabWidth, tabHeight);
+            buttons[i] = draw<TextButton>(String(int(advancedSettings[controlNames[baseIndex] + modifierNames[i]].value)), NO_PIN,
+                                          i * (tabWidth + tabGap), tabY, tabWidth, tabHeight);
         }
 
         draw<TextButton>("Back", pins::BTN_UNDER_L, -5, Display::HEIGHT - 25, 90, 30);

@@ -2,8 +2,8 @@
 
 #include <components/DynamicText.h>
 #include <devices/device.h>
-#include <services/encoder.h>
 #include <services/coms.h>
+#include <services/encoder.h>
 #include <state/remote.h>
 
 #include "displayUtils.h"
@@ -93,8 +93,8 @@ void drawMenuFrame() {
     int numOptions = activeMenuCount;
     const MenuItem *options = activeMenu->data();
 
-    // Since wrap-around is disabled, currentOption should always be within bounds
-    // Just clamp it as a safety measure
+    // Since wrap-around is disabled, currentOption should always be within
+    // bounds Just clamp it as a safety measure
     int safeCurrentOption = currentOption;
     if (safeCurrentOption < 0) safeCurrentOption = 0;
     if (safeCurrentOption >= numOptions) safeCurrentOption = numOptions - 1;
@@ -116,13 +116,14 @@ void drawMenuFrame() {
 
     for (int i = 0; i < 5; i++) {
         int optionIndex = safeCurrentOption - 2 + i;
-        
+
         // Check if this position should show a menu item or be blank
         if (optionIndex < 0 || optionIndex >= numOptions) {
             // Draw actual blank area to clear any previous content
-            int y = Display::StatusbarHeight + Display::Padding::P1 + menuYOffset;
+            int y =
+                Display::StatusbarHeight + Display::Padding::P1 + menuYOffset;
             int x = Display::Padding::P1;
-            
+
             if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
                 tft.fillRect(x, y, menuWidth, menuItemHeight, Colors::black);
                 xSemaphoreGive(displayMutex);
@@ -163,7 +164,8 @@ void drawMenuTask(void *pvParameters) {
     auto isInCorrectState = []() {
         return stateMachine->is("main_menu"_s) ||
                stateMachine->is("settings_menu"_s) ||
-               stateMachine->is("device_menu"_s);
+               stateMachine->is("device_menu"_s) ||
+               stateMachine->is("device_settings_menu"_s);
     };
 
     auto isInNestedState = []() { return stateMachine->is("device_menu"_s); };
@@ -194,7 +196,7 @@ void drawMenuTask(void *pvParameters) {
             }
             rightEncoder.setEncoderValue(boundedCurrentOption);
             currentOption = boundedCurrentOption;
-            
+
             initialized = true;
         }
         vTaskDelay(1);
@@ -301,54 +303,42 @@ static volatile bool deviceListTaskExitRequested = false;
 
 void buildDeviceListMenu() {
     deviceListMenu.clear();
-    
-    auto& devices = getDiscoveredDevices();
-    
+
+    auto &devices = getDiscoveredDevices();
+
     if (devices.empty()) {
         // Add a "No devices found" placeholder
-        deviceListMenu.push_back({
-            MenuItemE::DEVICE_MENU_ITEM,
-            "No devices found",
-            bitmap_ble_connect,
-            std::nullopt,
-            Colors::textForegroundSecondary,
-            Colors::textForegroundSecondary,
-            -1
-        });
+        deviceListMenu.push_back({MenuItemE::DEVICE_MENU_ITEM,
+                                  "No devices found", bitmap_ble_connect,
+                                  std::nullopt, Colors::textForegroundSecondary,
+                                  Colors::textForegroundSecondary, -1});
     } else {
         for (size_t i = 0; i < devices.size(); i++) {
             std::string displayName = devices[i].name;
             if (displayName.empty()) {
                 displayName = "Unknown Device";
             }
-            
+
             // Add RSSI indicator
             // displayName += " (" + std::to_string(devices[i].rssi) + " dBm)";
-            
-            deviceListMenu.push_back({
-                MenuItemE::DEVICE_MENU_ITEM,
-                displayName,
-                bitmap_ble_connect,
-                std::nullopt,
-                Colors::textForeground,
-                Colors::textBackground,
-                static_cast<int>(i)
-            });
+
+            deviceListMenu.push_back(
+                {MenuItemE::DEVICE_MENU_ITEM, displayName, bitmap_ble_connect,
+                 std::nullopt, Colors::textForeground, Colors::textBackground,
+                 static_cast<int>(i)});
         }
     }
-    
+
     deviceListCount = deviceListMenu.size();
 }
 
 void drawDeviceListTask(void *pvParameters) {
     int lastEncoderValue = -1;
-    
-    auto isInCorrectState = []() {
-        return stateMachine->is("device_list"_s);
-    };
-    
+
+    auto isInCorrectState = []() { return stateMachine->is("device_list"_s); };
+
     deviceListTaskHandle = xTaskGetCurrentTaskHandle();
-    
+
     bool initialized = false;
     while (!initialized) {
         if (isInCorrectState()) {
@@ -360,23 +350,23 @@ void drawDeviceListTask(void *pvParameters) {
         }
         vTaskDelay(1);
     }
-    
+
     while (isInCorrectState() && !deviceListTaskExitRequested) {
         int rawEncoderValue = rightEncoder.readEncoder();
         currentOption = rawEncoderValue;
-        
+
         if (lastEncoderValue != currentOption) {
             lastEncoderValue = currentOption;
-            
+
             // Redraw menu with updated selection
             activeMenu = &deviceListMenu;
             activeMenuCount = deviceListCount;
             drawMenuFrame();
         }
-        
+
         vTaskDelay(16 / portTICK_PERIOD_MS);
     }
-    
+
     deviceListTaskHandle = NULL;
     vTaskDelete(NULL);
 }
@@ -397,22 +387,22 @@ void drawDeviceListMenu() {
             deviceListTaskHandle = NULL;
         }
     }
-    
+
     deviceListTaskExitRequested = false;
-    
+
     ESP_LOGD("DEVICE_LIST", "Drawing device list");
-    
+
     // Build the menu from discovered devices
     buildDeviceListMenu();
-    
+
     // Set active menu
     activeMenu = &deviceListMenu;
     activeMenuCount = deviceListCount;
     currentOption = 0;
-    
+
     clearPage();
     vTaskDelay(10 / portTICK_PERIOD_MS);
-    
+
     xTaskCreatePinnedToCore(drawDeviceListTask, "drawDeviceListTask",
                             5 * configMINIMAL_STACK_SIZE, NULL, 5,
                             &deviceListTaskHandle, 1);

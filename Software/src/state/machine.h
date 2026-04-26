@@ -73,7 +73,6 @@ struct ossm_remote_state {
 
             "device_draw_control"_s + on_entry<_> / drawControl,
             "device_draw_control"_s + event<right_button_pressed>[hasDeviceMenu<>] = "device_menu"_s,
-            // TODO: Left Menu button needs a menu behind it, this is disabled and only a placeholder for now.
             "device_draw_control"_s + event<left_button_pressed>[hasDeviceSettingsMenu<>] = "device_settings_menu"_s,
             "device_draw_control"_s + event<middle_button_pressed> / softPause,
             "device_draw_control"_s + event<middle_button_second_press> / stop = "device_stop"_s,

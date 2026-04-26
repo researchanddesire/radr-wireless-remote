@@ -42,7 +42,7 @@ class OSSMAdvanced : public Device {
     std::vector<std::string> controlNames;
     std::vector<std::string> modifierNames;
 
-    std::vector<uint16_t> advancedColors = {0xf860, 0xfc00, 0xffe0, 0x07e0, 0x07ff, 0x001f, 0xa87d};
+    std::vector<uint16_t> advancedColors = {0xf860, 0xfc00, 0xffe0, 0x07e0, 0x001f, 0xa87d, 0xf81f};
 
     std::unique_ptr<GFXcanvas16> canvas = std::make_unique<GFXcanvas16>(300, 152);
 
@@ -239,7 +239,7 @@ class OSSMAdvanced : public Device {
                                                       .pos_x = 0,
                                                       .pos_y = (int16_t)(Display::PageY + 35),
                                                       .mapToLeftLed = true});
-        speedBar->setColor(Colors::speed);
+        speedBar->setColor(advancedColors[6]);
         valueBar = draw<EncoderBar>(EncoderBar::Props{.encoder = &rightEncoder,
                                                       .value = &advancedSettings[controlNames[0]].value,
                                                       .pos_x = (int16_t)(DISPLAY_WIDTH - 10),

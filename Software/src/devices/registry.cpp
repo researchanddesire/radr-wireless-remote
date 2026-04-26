@@ -24,18 +24,12 @@ void initRegistry() {
     registryNames.clear();
 
     // Known explicit services
-    registry.emplace(
-        OSSM_SERVICE_ID,
-        [](const NimBLEAdvertisedDevice *advertisedDevice) -> Device * {
-            return new OSSM(advertisedDevice);
-        });
-    registryNames.emplace(OSSM_SERVICE_ID, OSSM_SERVICE_NAME);
-    registry.emplace(
-        OSSM_ADVANCED_SERVICE_ID,
-        [](const NimBLEAdvertisedDevice *advertisedDevice) -> Device * {
-            return new OSSMAdvanced(advertisedDevice);
-        });
-    registryNames.emplace(OSSM_ADVANCED_SERVICE_ID, OSSM_ADVANCED_SERVICE_NAME);
+    registry.try_emplace(OSSM_SERVICE_ID,
+                         [](const NimBLEAdvertisedDevice *advertisedDevice) -> Device * { return new OSSM(advertisedDevice); });
+    registryNames.try_emplace(OSSM_SERVICE_ID, OSSM_SERVICE_NAME);
+    registry.try_emplace(OSSM_ADVANCED_SERVICE_ID,
+                         [](const NimBLEAdvertisedDevice *advertisedDevice) -> Device * { return new OSSMAdvanced(advertisedDevice); });
+    registryNames.try_emplace(OSSM_ADVANCED_SERVICE_ID, OSSM_ADVANCED_SERVICE_NAME);
 
     // Try to read registry.json from LittleFS
     if (LittleFS.exists("/registry.json")) {
@@ -55,24 +49,20 @@ void initRegistry() {
                 vTaskDelay(1);
 
                 if (!error) {
-                    ESP_LOGI(REGISTRY_TAG,
-                             "Loaded device registry from LittleFS");
+                    ESP_LOGI(REGISTRY_TAG, "Loaded device registry from LittleFS");
 
                     // Parse JSON and add UUIDs to registry
                     for (JsonPair pair : doc.as<JsonObject>()) {
                         std::string uuidStr = pair.key().c_str();
                         ESP_LOGD(REGISTRY_TAG, "UUID: %s", uuidStr.c_str());
-                        std::transform(uuidStr.begin(), uuidStr.end(),
-                                       uuidStr.begin(), ::toupper);
-                        ESP_LOGD(REGISTRY_TAG, "Uppercase UUID: %s",
-                                 uuidStr.c_str());
+                        std::transform(uuidStr.begin(), uuidStr.end(), uuidStr.begin(), ::toupper);
+                        ESP_LOGD(REGISTRY_TAG, "Uppercase UUID: %s", uuidStr.c_str());
 
                         registry.emplace(uuidStr, ButtplugIODeviceFactory);
                         vTaskDelay(1);
                     }
                 } else {
-                    ESP_LOGW(REGISTRY_TAG, "Failed to parse registry.json: %s",
-                             error.c_str());
+                    ESP_LOGW(REGISTRY_TAG, "Failed to parse registry.json: %s", error.c_str());
                 }
             } else {
                 ESP_LOGW(REGISTRY_TAG, "registry.json file too large or empty");
@@ -87,8 +77,7 @@ void initRegistry() {
 }
 
 const DeviceFactory *getDeviceFactory(const NimBLEUUID &serviceUUID) {
-    ESP_LOGI(REGISTRY_TAG, "Getting device factory for service UUID: %s",
-             serviceUUID.toString().c_str());
+    ESP_LOGI(REGISTRY_TAG, "Getting device factory for service UUID: %s", serviceUUID.toString().c_str());
     // Convert NimBLEUUID to Uppercase std::string for lookup
     std::string uuidStr = serviceUUID.toString().c_str();
     std::transform(uuidStr.begin(), uuidStr.end(), uuidStr.begin(), ::toupper);
@@ -97,18 +86,15 @@ const DeviceFactory *getDeviceFactory(const NimBLEUUID &serviceUUID) {
 
     if (it == registry.end()) {
         // TODO: Manage this better. Send the user to an error screen.
-        ESP_LOGI(REGISTRY_TAG, "No device factory found for service UUID: %s",
-                 serviceUUID.toString().c_str());
+        ESP_LOGI(REGISTRY_TAG, "No device factory found for service UUID: %s", serviceUUID.toString().c_str());
         return nullptr;
     }
 
     return &it->second;
 }
 
-const std::string getDeviceName(const NimBLEUUID &serviceUUID,
-                                std::string defaultName) {
-    ESP_LOGI(REGISTRY_TAG, "Getting device name for service UUID: %s",
-             serviceUUID.toString().c_str());
+const std::string getDeviceName(const NimBLEUUID &serviceUUID, std::string defaultName) {
+    ESP_LOGI(REGISTRY_TAG, "Getting device name for service UUID: %s", serviceUUID.toString().c_str());
     // Convert NimBLEUUID to Uppercase std::string for lookup
     std::string uuidStr = serviceUUID.toString().c_str();
     std::transform(uuidStr.begin(), uuidStr.end(), uuidStr.begin(), ::toupper);
@@ -117,8 +103,7 @@ const std::string getDeviceName(const NimBLEUUID &serviceUUID,
 
     if (it == registryNames.end()) {
         // TODO: Manage this better. Send the user to an error screen.
-        ESP_LOGI(REGISTRY_TAG, "No device name found for service UUID: %s",
-                 serviceUUID.toString().c_str());
+        ESP_LOGI(REGISTRY_TAG, "No device name found for service UUID: %s", serviceUUID.toString().c_str());
         return defaultName;
     }
 

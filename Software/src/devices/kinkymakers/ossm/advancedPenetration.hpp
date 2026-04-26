@@ -8,6 +8,7 @@
 #include <components/EncoderBar.h>
 #include <components/LinearRailGraph.h>
 #include <components/TextButton.h>
+#include <memory>
 #include <pages/menus.h>
 #include <services/leds.h>
 
@@ -21,18 +22,6 @@ extern void resetMiddleButtonCounter();
 #define CHARACTERISTIC_ADVANCED_CONTROL_UUID "4F53534D-6164-7661-6E63-6564636F6E74"
 #define CHARACTERISTIC_ADVANCED_PRESETS_UUID "4F53534D-6164-7661-6E63-656470727374"
 
-struct Control {
-    float value;
-    std::uint8_t minValue = 0;
-    std::uint8_t maxValue = 100;
-};
-
-std::unordered_map<std::string, Control> advancedSettings;
-std::vector<std::string> controlNames;
-std::vector<std::string> modifierNames;
-
-std::vector<uint16_t> advancedColors = {0xf860, 0xfc00, 0xffe0, 0x07e0, 0x07ff, 0x001f, 0xa87d};
-
 class OSSMAdvanced : public Device {
   public:
     bool isFirstConnect = true;
@@ -43,7 +32,19 @@ class OSSMAdvanced : public Device {
     const int16_t tabHeight = 24;
     const int16_t tabGap = 4;
 
-    GFXcanvas16 *canvas = new GFXcanvas16(300, 152);
+    struct Control {
+        float value;
+        std::uint8_t minValue = 0;
+        std::uint8_t maxValue = 100;
+    };
+
+    std::unordered_map<std::string, Control> advancedSettings;
+    std::vector<std::string> controlNames;
+    std::vector<std::string> modifierNames;
+
+    std::vector<uint16_t> advancedColors = {0xf860, 0xfc00, 0xffe0, 0x07e0, 0x07ff, 0x001f, 0xa87d};
+
+    std::unique_ptr<GFXcanvas16> canvas = std::make_unique<GFXcanvas16>(300, 152);
 
     TextButton *pauseStopButton = nullptr;
 
@@ -62,47 +63,18 @@ class OSSMAdvanced : public Device {
                                                                       size_t length, bool isNotify) { readCount++; }}}};
     }
 
-    ~OSSMAdvanced() {
-        delete canvas;
-        delete pauseStopButton;
-        for (auto button : buttons) {
-            delete button;
-        }
-        delete speedBar;
-        delete valueBar;
-    }
-
     const char *getName() override { return "OSSM - Advanced Mode"; }
     NimBLEUUID getServiceUUID() override { return NimBLEUUID(OSSM_ADVANCED_SERVICE_ID); }
 
-    uint64_t getGCD(uint64_t a, uint64_t b) {
-        while (b != 0) {
-            uint64_t c = b;
-            b = a % b;
-            a = c;
-        }
-        return a;
-    }
-    uint64_t getLCM(uint64_t a, uint64_t b) {
-        return (a * b) / getGCD(a, b);  //
-    }
-
     float getMaxSteps() {
         uint8_t maxSteps = 4;
-        // uint64_t multiple = 0;
-        for (u_int8_t c = 0; c < controlNames.size(); c++) {
+        for (auto controlName : controlNames) {
             uint8_t modSteps = 0;
-            for (u_int8_t m = 1; m < controlNames.size() - 1; m++) {
-                modSteps += advancedSettings[controlNames[c] + modifierNames[m]].value;
+            for (u_int8_t m = 1; m < controlNames.size() - 2; m++) {
+                modSteps += advancedSettings[controlName + modifierNames[m]].value;
             }
-            // if (multiple) {
-            //     multiple = getLCM(multiple, modSteps);
-            // } else {
-            //     multiple = modSteps;
-            // }
             maxSteps = max(maxSteps, modSteps);
         }
-        // ESP_LOGI(TAG, "LCM: %d", multiple);
         return maxSteps;
     }
 
@@ -264,14 +236,14 @@ class OSSMAdvanced : public Device {
         draw<TextButton>(">>", pins::BTN_R_SHOULDER, DISPLAY_WIDTH - 65, -5, 70, 30);
         speedBar = draw<EncoderBar>(EncoderBar::Props{.encoder = &leftEncoder,
                                                       .value = &advancedSettings["SP"].value,
-                                                      .x = 0,
-                                                      .y = (int16_t)(Display::PageY + 35),
+                                                      .pos_x = 0,
+                                                      .pos_y = (int16_t)(Display::PageY + 35),
                                                       .mapToLeftLed = true});
         speedBar->setColor(Colors::speed);
         valueBar = draw<EncoderBar>(EncoderBar::Props{.encoder = &rightEncoder,
                                                       .value = &advancedSettings[controlNames[0]].value,
-                                                      .x = (int16_t)(DISPLAY_WIDTH - 10),
-                                                      .y = (int16_t)(Display::PageY + 35),
+                                                      .pos_x = (int16_t)(DISPLAY_WIDTH - 10),
+                                                      .pos_y = (int16_t)(Display::PageY + 35),
                                                       .mapToRightLed = true});
 
         pauseStopButton = draw<TextButton>("Pause", pins::BTN_UNDER_C, DISPLAY_WIDTH / 2 - 60, Display::HEIGHT - 25, 120, 30);
@@ -343,7 +315,7 @@ class OSSMAdvanced : public Device {
             u8_t minValue = std::stoi(singleConfig.substr(j + 1, k));
             u8_t maxValue = std::stoi(singleConfig.substr(k + 1, l));
             Control newControl = {float(minValue), minValue, maxValue};
-            advancedSettings.emplace(name, newControl);
+            advancedSettings.try_emplace(name, newControl);
             int8_t mi = singleConfig.find(':');
             if (mi > 0) {
                 modifierString = singleConfig.substr(l + 2) + ':';
@@ -364,12 +336,26 @@ class OSSMAdvanced : public Device {
                 if (modifierName == modifierNames[0]) {
                     newControl.value = newControl.maxValue;
                 }
-                advancedSettings.emplace(name + modifierName, newControl);
+                advancedSettings.try_emplace(name + modifierName, newControl);
                 iterString = iterString.substr(mi + 1);
                 mi = iterString.find(':');
             }
             configValues = configValues.substr(ci + 1);
             ci = configValues.find(',', 0);
+        }
+    }
+
+    void setButtonsText() {
+        if (stateMachine->is("device_menu"_s)) {
+            for (uint8_t i = 0; i < modifierNames.size(); i++) {
+                buttons[i]->setText(String(int(advancedSettings[controlNames[baseIndex] + modifierNames[i]].value)));
+            }
+            drawModifierDisplay();
+        } else {
+            for (int i = 0; i < controlNames.size() - 1; i++) {
+                buttons[i]->setText(String(int(advancedSettings[controlNames[i]].value)));
+            }
+            drawCurveDisplay();
         }
     }
 
@@ -379,17 +365,7 @@ class OSSMAdvanced : public Device {
                 parseStatus();
                 syncRightEncoder();
                 syncLeftEncoder();
-                if (stateMachine->is("device_menu"_s)) {
-                    for (uint8_t i = 0; i < modifierNames.size(); i++) {
-                        buttons[i]->setText(String(int(advancedSettings[controlNames[baseIndex] + modifierNames[i]].value)));
-                    }
-                    drawModifierDisplay();
-                } else {
-                    for (int i = 0; i < controlNames.size() - 1; i++) {
-                        buttons[i]->setText(String(int(advancedSettings[controlNames[i]].value)));
-                    }
-                    drawCurveDisplay();
-                }
+                setButtonsText();
             }
             vTaskDelay(100);
         }
@@ -410,19 +386,20 @@ class OSSMAdvanced : public Device {
         this->settingsMenu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, "Save New Preset", researchAndDesireWaves});
     }
 
+    static void runDirtyRunnerTask(void *pvParameters) { static_cast<OSSMAdvanced *>(pvParameters)->dirtyRunner(); }
+
     void onConnect() override {
         parseConfig();
         parseStatus();
 
         loadPresets();
         menu.clear();
-        this->menu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, "placeholder", nullptr, "placeholder", .metaIndex = 0});
+        this->menu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM, "placeholder", nullptr, "placeholder"});
 
         isConnected = true;
         isFirstConnect = false;
 
-        auto task = [](void *arg) { static_cast<OSSMAdvanced *>(arg)->dirtyRunner(); };
-        xTaskCreatePinnedToCore(task, "dirtyRunner", 5 * configMINIMAL_STACK_SIZE, device, 5, NULL, 1);
+        xTaskCreatePinnedToCore(runDirtyRunnerTask, "dirtyRunner", 5 * configMINIMAL_STACK_SIZE, device, 5, NULL, 1);
     }
 
     void onPause(bool fullStop = false) override {
@@ -562,7 +539,7 @@ class OSSMAdvanced : public Device {
         Control *edit = &advancedSettings[c];
         value = constrain(value, edit->minValue, edit->maxValue);
         if (value == edit->value && !hasRightEncoderChanged(true)) {
-            return 1;
+            return true;
         }
         edit->value = value;
         drawModifierDisplay();
@@ -574,7 +551,7 @@ class OSSMAdvanced : public Device {
         Control *edit = &advancedSettings[controlNames[baseIndex]];
         value = constrain(value, edit->minValue, edit->maxValue);
         if (value == edit->value && !hasRightEncoderChanged(true)) {
-            return 1;
+            return true;
         }
         edit->value = value;
         if (baseIndex == 0) {

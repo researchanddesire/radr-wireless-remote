@@ -12,6 +12,7 @@
 #include "services/leds.h"
 // Adafruit GFX fonts
 #include <AiEsp32RotaryEncoder.h>
+#include <memory>
 #include <vector>
 
 class EncoderBar : public DisplayObject {
@@ -25,16 +26,16 @@ class EncoderBar : public DisplayObject {
     bool mapToLeftLed = false;
     bool mapToRightLed = false;
     AiEsp32RotaryEncoder &encoder;
-    GFXcanvas16 *canvas;
+    std::unique_ptr<GFXcanvas16> canvas;
 
   public:
     struct Props {
         AiEsp32RotaryEncoder *encoder = nullptr;
         float *value;
-        int16_t x = -1;
-        int16_t y = -1;
-        int16_t width = 10;
-        int16_t height = 140;
+        int16_t pos_x = -1;
+        int16_t pos_y = -1;
+        int16_t w = 10;
+        int16_t h = 140;
         int minValue = 0;
         int maxValue = 100;
         bool mapToLeftLed = false;
@@ -42,18 +43,16 @@ class EncoderBar : public DisplayObject {
     };
 
     explicit EncoderBar(const Props &props)
-        : DisplayObject(props.x, props.y, props.width, props.height),
+        : DisplayObject(props.pos_x, props.pos_y, props.w, props.h),
           value(props.value),
           color(ST77XX_WHITE),
           encoder(*props.encoder),
           mapToLeftLed(props.mapToLeftLed),
-          mapToRightLed(props.mapToRightLed) {
-        minValue = props.minValue;
-        maxValue = props.maxValue;
-        canvas = new GFXcanvas16(props.width, props.height);
+          mapToRightLed(props.mapToRightLed),
+          minValue(props.minValue),
+          maxValue(props.maxValue) {
+        canvas = std::make_unique<GFXcanvas16>(props.w, props.h);
     }
-
-    ~EncoderBar() { delete canvas; }
 
     void setValue(float *newValue) {
         value = newValue;

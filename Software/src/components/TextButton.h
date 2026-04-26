@@ -6,6 +6,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
 #include <Fonts/FreeSans9pt7b.h>  // Match genericPages button font
+#include <memory>
 
 #include "../services/display.h"
 #include "DisplayObject.h"
@@ -34,7 +35,7 @@ class TextButton : public DisplayObject {
     uint16_t lastTextColor;
     uint16_t lastBackgroundColor;
 
-    GFXcanvas16 *canvas;
+    std::unique_ptr<GFXcanvas16> canvas;
 
   public:
     TextButton(const String &text, uint8_t pin, int16_t x, int16_t y, int16_t width = 70, int16_t height = 35)
@@ -43,10 +44,8 @@ class TextButton : public DisplayObject {
         lastText = text;
         lastTextColor = textColor;
         lastBackgroundColor = backgroundColor;
-        canvas = new GFXcanvas16(width, height);
+        canvas = std::make_unique<GFXcanvas16>(width, height);
     }
-
-    ~TextButton() { delete canvas; }
 
     // Methods to dynamically change button appearance
     void setText(const String &text) { buttonText = text; }

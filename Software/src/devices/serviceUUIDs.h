@@ -8,7 +8,5 @@ static const char OSSM_SERVICE_ID[] PROGMEM = "522B443A-4F53-534D-0001-420BADBAB
 static const char OSSM_ADVANCED_SERVICE_ID[] PROGMEM = "4F53534D-6164-7661-6E63-65646D6F6465";
 static const char DOMI_SERVICE_ID[] PROGMEM = "57300001-0023-4BD4-BBD5-A6920E4C5653";
 
-static const char OSSM_SERVICE_NAME[] PROGMEM = "OSSM";
-static const char OSSM_ADVANCED_SERVICE_NAME[] PROGMEM = "OSSM - Advanced Penetration";
-static const char DOMI_SERVICE_NAME[] PROGMEM = "DOMI 2";
+static const char OSSM_ADVANCED_SERVICE_NAME[] PROGMEM = "Advanced Penetration";
 #endif

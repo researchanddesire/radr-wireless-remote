@@ -26,7 +26,6 @@ void initRegistry() {
     // Known explicit services
     registry.try_emplace(OSSM_SERVICE_ID,
                          [](const NimBLEAdvertisedDevice *advertisedDevice) -> Device * { return new OSSM(advertisedDevice); });
-    registryNames.try_emplace(OSSM_SERVICE_ID, OSSM_SERVICE_NAME);
     registry.try_emplace(OSSM_ADVANCED_SERVICE_ID,
                          [](const NimBLEAdvertisedDevice *advertisedDevice) -> Device * { return new OSSMAdvanced(advertisedDevice); });
     registryNames.try_emplace(OSSM_ADVANCED_SERVICE_ID, OSSM_ADVANCED_SERVICE_NAME);
@@ -95,17 +94,15 @@ const DeviceFactory *getDeviceFactory(const NimBLEUUID &serviceUUID) {
 
 const std::string getDeviceName(const NimBLEUUID &serviceUUID, std::string defaultName) {
     ESP_LOGI(REGISTRY_TAG, "Getting device name for service UUID: %s", serviceUUID.toString().c_str());
-    // Convert NimBLEUUID to Uppercase std::string for lookup
     std::string uuidStr = serviceUUID.toString().c_str();
     std::transform(uuidStr.begin(), uuidStr.end(), uuidStr.begin(), ::toupper);
 
     auto it = registryNames.find(uuidStr);
 
     if (it == registryNames.end()) {
-        // TODO: Manage this better. Send the user to an error screen.
         ESP_LOGI(REGISTRY_TAG, "No device name found for service UUID: %s", serviceUUID.toString().c_str());
         return defaultName;
     }
 
-    return it->second;
+    return defaultName + "-" + it->second;
 }

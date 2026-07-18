@@ -11,6 +11,7 @@
 #include <mbedtls/sha256.h>
 
 #if defined(FIRMWARE_USE_IDF_CRT_BUNDLE)
+extern "C" esp_err_t esp_crt_bundle_attach(void *configuration);
 #define FIRMWARE_CRT_BUNDLE_ATTACH esp_crt_bundle_attach
 #else
 #define FIRMWARE_CRT_BUNDLE_ATTACH arduino_esp_crt_bundle_attach
@@ -42,10 +43,13 @@ inline bool postCheck(const char *apiBaseUrl, const DeviceReport &report,
     esp_http_client_set_header(client, "Accept-Encoding", "identity");
 
     bool success = false;
-    if (esp_http_client_open(client, body.size()) != ESP_OK ||
-        esp_http_client_write(client, body.data(), body.size()) !=
-            static_cast<int>(body.size())) {
-        error = "firmware check request failed";
+    const esp_err_t openResult = esp_http_client_open(client, body.size());
+    if (openResult != ESP_OK) {
+        error = "firmware check connection failed: " +
+                String(esp_err_to_name(openResult));
+    } else if (esp_http_client_write(client, body.data(), body.size()) !=
+               static_cast<int>(body.size())) {
+        error = "firmware check request write failed";
     } else {
         esp_http_client_fetch_headers(client);
         const int status = esp_http_client_get_status_code(client);
@@ -110,8 +114,10 @@ inline bool installStreamedArtifact(const Artifact &artifact, int updateCommand,
     esp_http_client_set_header(client, "Accept-Encoding", "identity");
 
     bool success = false;
-    if (esp_http_client_open(client, 0) != ESP_OK) {
-        error = "artifact connection failed";
+    const esp_err_t openResult = esp_http_client_open(client, 0);
+    if (openResult != ESP_OK) {
+        error =
+            "artifact connection failed: " + String(esp_err_to_name(openResult));
     } else {
         const auto contentLength = esp_http_client_fetch_headers(client);
         const int status = esp_http_client_get_status_code(client);

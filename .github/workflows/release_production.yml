@@ -79,8 +79,8 @@ jobs:
             echo "docs/v/latest already points to this release" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          git config user.name "AJ"
-          git config user.email "ajay.koenig@gmail.com"
+          git config user.name "rad-version-control[bot]"
+          git config user.email "rad-version-control[bot]@users.noreply.github.com"
           git commit -m "Publish production firmware ${{ steps.release.outputs.version }}"
           git push origin HEAD:main
 

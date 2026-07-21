@@ -7,3 +7,5 @@
 Documentation/node_modules/
 
 scratch
+.github/scripts/__pycache__/
+*.pyc

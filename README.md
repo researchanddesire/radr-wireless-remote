@@ -42,6 +42,12 @@ We wanted an open source wireless remote that could control not just the ossm, b
 
 
 
+## Contributing
+
+Fetch `origin`, branch feature work from `origin/staging`, and open the pull request back into `staging`. Reserve direct production hotfixes for branches created from `origin/main`; open those PRs into `main` and begin the PR title with the standalone word `hotfix` (case-insensitive).
+
+Feature and hotfix PRs are squash-merged into one focused commit. Promotions from `staging` to `main` and hotfix synchronization from `main` to `staging` use merge commits so the long-lived branches retain shared ancestry.
+
 CERN Open Hardware Licence Version 2 - Strongly Reciprocal
 Contributions to this GitHub repository will assume release under the same license.
 

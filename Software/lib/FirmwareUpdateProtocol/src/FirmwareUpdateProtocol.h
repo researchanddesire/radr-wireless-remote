@@ -14,6 +14,7 @@ constexpr int PROTOCOL_VERSION = 1;
 constexpr std::size_t MAX_ARTIFACTS = 8;
 
 struct DeviceReport {
+    int protocolVersion = PROTOCOL_VERSION;
     std::string deviceType;
     std::string deviceId;
     std::string reportedTrack;
@@ -21,8 +22,12 @@ struct DeviceReport {
     std::string currentBuild;
     std::string firmwareHash;
     std::string chip;
+    std::uint32_t chipRevision = 0;
+    std::uint32_t chipCores = 0;
     std::string hardwareRevision;
     std::uint32_t flashSizeBytes = 0;
+    std::uint32_t otaSlotSizeBytes = 0;
+    std::uint32_t psramSizeBytes = 0;
     std::string partitionLayout;
 };
 
@@ -35,7 +40,12 @@ struct Artifact {
 };
 
 struct Decision {
+    int protocolVersion = PROTOCOL_VERSION;
+    bool shouldUpdate = false;
+    // Compatibility mirror for firmware deployed before shouldUpdate became
+    // the canonical decision field.
     bool updateAvailable = false;
+    std::string reason;
     std::string reportedTrack;
     std::string assignedTrack;
     bool trackChanged = false;
@@ -43,6 +53,7 @@ struct Decision {
     std::string targetVersion;
     std::string nextHopVersion;
     std::string releaseId;
+    std::string buildSha;
     std::string kind;
     std::array<Artifact, MAX_ARTIFACTS> artifacts{};
     std::size_t artifactCount = 0;
@@ -51,6 +62,13 @@ struct Decision {
 
 inline bool isTrack(const std::string &value) {
     return value == "main" || value == "staging";
+}
+
+inline bool isDecisionReason(const std::string &value) {
+    return value == "update-available" || value == "already-current" ||
+           value == "no-target" || value == "updates-disabled" ||
+           value == "release-paused" || value == "rollout-denied" ||
+           value == "incompatible-device";
 }
 
 inline bool isSemver(const std::string &value) {
@@ -78,10 +96,36 @@ inline bool isSha256(const std::string &value) {
            });
 }
 
+inline bool isBuildIdentifier(const std::string &value) {
+    return value.size() >= 7 && value.size() <= 64 &&
+           std::all_of(value.begin(), value.end(), [](const char character) {
+               return std::isxdigit(static_cast<unsigned char>(character));
+           });
+}
+
+inline bool buildIdentifiersMatch(const std::string &left,
+                                  const std::string &right) {
+    if (!isBuildIdentifier(left) || !isBuildIdentifier(right)) return false;
+    const auto sharedLength = std::min(left.size(), right.size());
+    for (std::size_t index = 0; index < sharedLength; ++index) {
+        if (std::tolower(static_cast<unsigned char>(left[index])) !=
+            std::tolower(static_cast<unsigned char>(right[index]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+inline bool isInstallableArtifactRole(const std::string &role) {
+    return role == "application" || role == "filesystem";
+}
+
+inline bool isMetadataArtifactRole(const std::string &role) {
+    return role == "bootloader" || role == "partitions" || role == "manifest";
+}
+
 inline bool isArtifactRole(const std::string &role) {
-    return role == "application" || role == "filesystem" ||
-           role == "bootloader" || role == "partitions" ||
-           role == "manifest";
+    return isInstallableArtifactRole(role) || isMetadataArtifactRole(role);
 }
 
 inline bool isHttpsArtifactUrl(const std::string &url,
@@ -109,6 +153,7 @@ inline bool isHttpsArtifactUrl(const std::string &url,
 
 inline std::string serializeReport(const DeviceReport &report) {
     JsonDocument document;
+    document["protocolVersion"] = report.protocolVersion;
     document["deviceType"] = report.deviceType;
     document["deviceId"] = report.deviceId;
     document["reportedTrack"] = report.reportedTrack;
@@ -118,10 +163,15 @@ inline std::string serializeReport(const DeviceReport &report) {
     if (!report.firmwareHash.empty())
         document["firmwareHash"] = report.firmwareHash;
     if (!report.chip.empty()) document["chip"] = report.chip;
+    document["chipRevision"] = report.chipRevision;
+    if (report.chipCores > 0) document["chipCores"] = report.chipCores;
     if (!report.hardwareRevision.empty())
         document["hardwareRevision"] = report.hardwareRevision;
     if (report.flashSizeBytes > 0)
         document["flashSizeBytes"] = report.flashSizeBytes;
+    if (report.otaSlotSizeBytes > 0)
+        document["otaSlotSizeBytes"] = report.otaSlotSizeBytes;
+    document["psramSizeBytes"] = report.psramSizeBytes;
     if (!report.partitionLayout.empty())
         document["partitionLayout"] = report.partitionLayout;
     std::string output;
@@ -154,7 +204,11 @@ inline bool parseDecision(const std::string &payload,
     }
 
     Decision parsed;
-    if (!document["updateAvailable"].is<bool>() ||
+    if ((!document["protocolVersion"].isNull() &&
+         (!document["protocolVersion"].is<int>() ||
+          document["protocolVersion"].as<int>() != PROTOCOL_VERSION)) ||
+        (!document["shouldUpdate"].is<bool>() &&
+         !document["updateAvailable"].is<bool>()) ||
         !document["trackChanged"].is<bool>() ||
         !document["nextCheckSeconds"].is<std::uint32_t>() ||
         !readRequiredString(document["reportedTrack"], parsed.reportedTrack) ||
@@ -168,11 +222,39 @@ inline bool parseDecision(const std::string &payload,
         return false;
     }
 
-    parsed.updateAvailable = document["updateAvailable"].as<bool>();
+    if (!document["protocolVersion"].isNull()) {
+        parsed.protocolVersion = document["protocolVersion"].as<int>();
+    }
+    const bool hasCanonicalDecision = document["shouldUpdate"].is<bool>();
+    const bool hasLegacyDecision = document["updateAvailable"].is<bool>();
+    const bool canonicalResponse =
+        !document["protocolVersion"].isNull() || hasCanonicalDecision ||
+        !document["reason"].isNull();
+    if (hasCanonicalDecision && hasLegacyDecision &&
+        document["shouldUpdate"].as<bool>() !=
+            document["updateAvailable"].as<bool>()) {
+        error = "conflicting update decision fields";
+        return false;
+    }
+    parsed.shouldUpdate = hasCanonicalDecision
+                              ? document["shouldUpdate"].as<bool>()
+                              : document["updateAvailable"].as<bool>();
+    parsed.updateAvailable = parsed.shouldUpdate;
+    if (hasCanonicalDecision) {
+        if (!readRequiredString(document["reason"], parsed.reason) ||
+            !isDecisionReason(parsed.reason) ||
+            (parsed.shouldUpdate !=
+             (parsed.reason == "update-available"))) {
+            error = "invalid update decision reason";
+            return false;
+        }
+    } else if (document["reason"].is<const char *>()) {
+        parsed.reason = document["reason"].as<const char *>();
+    }
     parsed.trackChanged = document["trackChanged"].as<bool>();
     parsed.nextCheckSeconds = document["nextCheckSeconds"].as<std::uint32_t>();
-    if (!parsed.updateAvailable) {
-        if (!document["update"].isNull()) {
+    if (!parsed.shouldUpdate) {
+        if (!document["update"].isNull() || !parsed.nextHopVersion.empty()) {
             error = "no-update response contains update data";
             return false;
         }
@@ -189,6 +271,15 @@ inline bool parseDecision(const std::string &payload,
         (parsed.kind != "firmware" && parsed.kind != "migration") ||
         parsed.nextHopVersion.empty()) {
         error = "invalid update metadata";
+        return false;
+    }
+    if (!update["buildSha"].isNull() &&
+        (!readRequiredString(update["buildSha"], parsed.buildSha) ||
+         !isBuildIdentifier(parsed.buildSha))) {
+        error = "invalid update build identifier";
+        return false;
+    } else if (canonicalResponse && parsed.buildSha.empty()) {
+        error = "canonical update response is missing build SHA";
         return false;
     }
 
@@ -225,6 +316,19 @@ inline bool parseDecision(const std::string &payload,
               });
     decision = parsed;
     return true;
+}
+
+inline bool decisionMatchesReport(const DeviceReport &report,
+                                  const Decision &decision) {
+    if (decision.reportedTrack != report.reportedTrack ||
+        decision.currentVersion != report.currentVersion ||
+        decision.trackChanged !=
+            (decision.reportedTrack != decision.assignedTrack)) {
+        return false;
+    }
+    return !decision.shouldUpdate ||
+           decision.assignedTrack != report.reportedTrack ||
+           !buildIdentifiersMatch(report.currentBuild, decision.buildSha);
 }
 
 }  // namespace firmware

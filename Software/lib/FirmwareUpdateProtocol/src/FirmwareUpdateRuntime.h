@@ -76,11 +76,7 @@ inline bool postCheck(const char *apiBaseUrl, const DeviceReport &report,
 
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
-    if (success &&
-        (decision.reportedTrack != report.reportedTrack ||
-         decision.currentVersion != report.currentVersion ||
-         decision.trackChanged !=
-             (decision.reportedTrack != decision.assignedTrack))) {
+    if (success && !decisionMatchesReport(report, decision)) {
         error = "firmware response does not match device report";
         return false;
     }
@@ -182,6 +178,8 @@ inline bool installApplicationAndFilesystem(const Decision &decision,
         } else if (artifact.role == "application") {
             if (!installStreamedArtifact(artifact, U_FLASH, error)) return false;
             applicationInstalled = true;
+        } else if (isMetadataArtifactRole(artifact.role)) {
+            continue;
         } else {
             error = ("unsupported installable artifact role: " + artifact.role).c_str();
             return false;

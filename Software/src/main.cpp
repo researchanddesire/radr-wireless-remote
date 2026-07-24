@@ -20,12 +20,19 @@
 #include "services/vibrator.h"
 #include "services/wm.h"
 #include "state/remote.h"
+#include "tasks/update.h"
 
 OneButton leftShoulderBtn;
 OneButton rightShoulderBtn;
 OneButton underLeftBtn;
 OneButton underCenterBtn;
 OneButton underRightBtn;
+
+#ifdef CONFIG_APP_ROLLBACK_ENABLE
+// Let setup finish its device-level health checks before accepting a new OTA
+// image. The Arduino core otherwise marks it valid before setup runs.
+extern "C" bool verifyRollbackLater() { return true; }
+#endif
 
 void setup() {
     Serial.begin(115200);
@@ -85,6 +92,7 @@ void setup() {
     initBLE();
     initStateMachine();
     initBattery();
+    confirmRunningFirmware();
 
     // initIMUService();
     // updateIMUReadings();

@@ -2,6 +2,9 @@
 
 #include <LittleFS.h>
 #include <WiFi.h>
+#include <esp_flash.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
 
 #include "FirmwareUpdateRuntime.h"
 #include "constants/Version.h"
@@ -28,19 +31,43 @@ std::string stableDeviceId() {
     return identifier;
 }
 
+std::uint32_t physicalFlashSize() {
+    std::uint32_t size = 0;
+    return esp_flash_get_physical_size(nullptr, &size) == ESP_OK
+               ? size
+               : ESP.getFlashChipSize();
+}
+
+std::string runningFirmwareHash() {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    unsigned char digest[32] = {};
+    if (running == nullptr ||
+        esp_partition_get_sha256(running, digest) != ESP_OK) {
+        return {};
+    }
+    return firmware::sha256Hex(digest);
+}
+
 firmware::DeviceReport makeDeviceReport() {
-    return {
-        .deviceType = "radr",
-        .deviceId = stableDeviceId(),
-        .reportedTrack = FIRMWARE_TRACK,
-        .currentVersion = VERSION,
-        .currentBuild = FIRMWARE_BUILD_SHA,
-        .firmwareHash = "",
-        .chip = std::string(ESP.getChipModel()),
-        .hardwareRevision = "radr-v1",
-        .flashSizeBytes = ESP.getFlashChipSize(),
-        .partitionLayout = "radr-ota-v1",
-    };
+    firmware::DeviceReport report;
+    report.deviceType = "radr";
+    report.deviceId = stableDeviceId();
+    report.reportedTrack = FIRMWARE_TRACK;
+    report.currentVersion = VERSION;
+    report.currentBuild = FIRMWARE_BUILD_SHA;
+    report.firmwareHash = runningFirmwareHash();
+    report.chip = ESP.getChipModel();
+    report.chipRevision = ESP.getChipRevision();
+    report.chipCores = ESP.getChipCores();
+    report.hardwareRevision = "radr-v1";
+    report.flashSizeBytes = physicalFlashSize();
+    const esp_partition_t *nextUpdatePartition =
+        esp_ota_get_next_update_partition(nullptr);
+    report.otaSlotSizeBytes =
+        nextUpdatePartition == nullptr ? 0 : nextUpdatePartition->size;
+    report.psramSizeBytes = ESP.getPsramSize();
+    report.partitionLayout = "radr-ota-v1";
+    return report;
 }
 
 bool validateInstallPlan(const firmware::Decision &decision, String &error) {
@@ -60,6 +87,8 @@ bool validateInstallPlan(const firmware::Decision &decision, String &error) {
                 return false;
             }
             sawApplication = true;
+        } else if (firmware::isMetadataArtifactRole(artifact.role)) {
+            continue;
         } else {
             error = ("unsupported RADR artifact role: " + artifact.role).c_str();
             return false;
@@ -96,6 +125,32 @@ TaskHandle_t updateSoftwareTaskHandle = nullptr;
 bool isSoftwareUpdateAvailable = false;
 bool isFilesystemUpdateAvailable = false;
 
+bool confirmRunningFirmware() {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (running == nullptr) return false;
+
+    esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
+    const esp_err_t stateResult = esp_ota_get_state_partition(running, &state);
+    if (stateResult == ESP_ERR_NOT_SUPPORTED ||
+        (stateResult == ESP_OK && state != ESP_OTA_IMG_PENDING_VERIFY)) {
+        return true;
+    }
+    if (stateResult != ESP_OK) {
+        ESP_LOGW(UPDATE_TAG, "Unable to read running OTA state: %s",
+                 esp_err_to_name(stateResult));
+        return false;
+    }
+
+    const esp_err_t confirmResult = esp_ota_mark_app_valid_cancel_rollback();
+    if (confirmResult != ESP_OK) {
+        ESP_LOGE(UPDATE_TAG, "Unable to confirm running firmware: %s",
+                 esp_err_to_name(confirmResult));
+        return false;
+    }
+    ESP_LOGI(UPDATE_TAG, "Confirmed running OTA image");
+    return true;
+}
+
 bool isUpdateAvailable() {
     if (WiFi.status() != WL_CONNECTED) return false;
 
@@ -109,9 +164,9 @@ bool isUpdateAvailable() {
     ESP_LOGI(UPDATE_TAG,
              "Resolver assigned track=%s update=%s target=%s next=%s",
              decision.assignedTrack.c_str(),
-             decision.updateAvailable ? "true" : "false",
+             decision.shouldUpdate ? "true" : "false",
              decision.targetVersion.c_str(), decision.nextHopVersion.c_str());
-    if (!decision.updateAvailable) return false;
+    if (!decision.shouldUpdate) return false;
     if (!validateInstallPlan(decision, error)) {
         ESP_LOGE(UPDATE_TAG, "Invalid install plan: %s", error.c_str());
         return false;

@@ -1,9 +1,9 @@
 #ifndef RADR_VERSION_H
 #define RADR_VERSION_H
 
-#define VERSION "1.0.46"
+#define VERSION "1.0.47"
 #define MAJOR_VERSION 1
 #define MINOR_VERSION 0
-#define PATCH_VERSION 46
+#define PATCH_VERSION 47
 
 #endif  // RADR_VERSION_H

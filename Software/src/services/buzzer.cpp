@@ -38,8 +38,10 @@ void buzzerTask(void *parameter) {
         }
 
         // Mario coin two-note motif: E7, G7 (approx). Adjust as desired.
-        const std::vector<Beat> &beats = PATTERN_MAP[currentPattern];
+        const BuzzerPattern playingPattern = currentPattern;
+        const std::vector<Beat> &beats = PATTERN_MAP[playingPattern];
         for (const Beat &beat : beats) {
+            if (currentPattern != playingPattern) break;
 #ifdef MUTE
             ESP_LOGI("BUZZER", "BZZZZZZZZ");
             vTaskDelay(pdMS_TO_TICKS(beat.duration));
@@ -52,7 +54,8 @@ void buzzerTask(void *parameter) {
 #endif
         }
 
-        currentPattern = BuzzerPattern::NONE;
+        if (currentPattern == playingPattern)
+            currentPattern = BuzzerPattern::NONE;
     }
 
     vTaskDelete(NULL);
@@ -75,12 +78,9 @@ void initBuzzer() {
 void playBuzzerPattern(BuzzerPattern pattern) { currentPattern = pattern; }
 
 void stopBuzzer() {
-    if (buzzerActive && buzzerTaskHandle != NULL) {
-        vTaskDelete(buzzerTaskHandle);
-        buzzerTaskHandle = NULL;
-        digitalWrite(pins::BUZZER_PIN, LOW);
-        buzzerActive = false;
-    }
+    currentPattern = BuzzerPattern::NONE;
+    noTone(pins::BUZZER_PIN);
+    digitalWrite(pins::BUZZER_PIN, LOW);
 }
 
 // Simple Mario coin jingle using Arduino tone API on the direct buzzer pin

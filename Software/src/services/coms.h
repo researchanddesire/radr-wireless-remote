@@ -27,6 +27,6 @@ void initBLE();
 std::vector<DiscoveredDevice> &getDiscoveredDevices();
 void clearDiscoveredDevices();
 void connectToDiscoveredDevice(int index);
-void startScanWithTimeout(int timeoutMs, void (*onComplete)());
+bool startScanWithTimeout(int timeoutMs, void (*onComplete)());
 
 #endif

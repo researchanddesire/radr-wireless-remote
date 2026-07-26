@@ -79,6 +79,16 @@ class Device : public NimBLEClientCallbacks {
     virtual void enterStreamingMode() {}
     virtual bool isInSimplePenetrationMode() const { return false; }
 
+    // Optional low-level control surface for a connected peripheral.  Device
+    // implementations route writes through their existing command transport;
+    // unsupported peripherals keep the default false result.
+    virtual bool readControlSetting(const String &name, float &value) const {
+        return false;
+    }
+    virtual bool writeControlSetting(const String &name, int value) {
+        return false;
+    }
+
     virtual void onRightEncoderChange(int value) {}
     virtual void onLeftEncoderChange(int value) {}
 

@@ -31,8 +31,11 @@ void vibratorTask(void *parameter) {
             continue;
         }
 
-        const std::vector<Pulse> &pulses = VIBRATOR_PATTERN_MAP[currentPattern];
+        const VibratorPattern playingPattern = currentPattern;
+        const std::vector<Pulse> &pulses =
+            VIBRATOR_PATTERN_MAP[playingPattern];
         for (const Pulse &pulse : pulses) {
+            if (currentPattern != playingPattern) break;
             digitalWrite(pins::VIBRATOR_PIN, HIGH);
             vTaskDelay(pdMS_TO_TICKS(pulse.duration));
             digitalWrite(pins::VIBRATOR_PIN, LOW);
@@ -41,7 +44,8 @@ void vibratorTask(void *parameter) {
             }
         }
 
-        currentPattern = VibratorPattern::NONE;
+        if (currentPattern == playingPattern)
+            currentPattern = VibratorPattern::NONE;
     }
 
     vTaskDelete(NULL);
@@ -62,3 +66,8 @@ void initVibrator() {
 }
 
 void playVibratorPattern(VibratorPattern pattern) { currentPattern = pattern; }
+
+void stopVibrator() {
+    currentPattern = VibratorPattern::NONE;
+    digitalWrite(pins::VIBRATOR_PIN, LOW);
+}

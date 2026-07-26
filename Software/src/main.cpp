@@ -89,13 +89,12 @@ void setup() {
     initDisplay();
     initBuzzer();
     initVibrator();
+    initIMUService();
+    updateIMUReadings();
     initBLE();
     initStateMachine();
     initBattery();
     confirmRunningFirmware();
-
-    // initIMUService();
-    // updateIMUReadings();
 
     setupAnimatedIcons();
     setupIdleMonitor();

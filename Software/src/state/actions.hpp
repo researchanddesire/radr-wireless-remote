@@ -34,7 +34,7 @@ struct DiscoveredDevice;
 std::vector<DiscoveredDevice> &getDiscoveredDevices();
 void clearDiscoveredDevices();
 void connectToDiscoveredDevice(int index);
-void startScanWithTimeout(int timeoutMs, void (*onComplete)());
+bool startScanWithTimeout(int timeoutMs, void (*onComplete)());
 void onScanComplete();
 
 // Defined in remote.cpp — breaks circular dependency with stateMachine type

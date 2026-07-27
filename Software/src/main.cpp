@@ -108,7 +108,11 @@ void setup() {
                 underLeftBtn.tick();
                 underCenterBtn.tick();
                 underRightBtn.tick();
-                wm.process();
+                if (wmMutex != nullptr &&
+                    xSemaphoreTake(wmMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    wm.process();
+                    xSemaphoreGive(wmMutex);
+                }
             }
         },
         "buttonTask", 6 * configMINIMAL_STACK_SIZE, NULL,

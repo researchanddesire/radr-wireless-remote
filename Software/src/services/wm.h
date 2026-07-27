@@ -4,6 +4,7 @@
 #include "WiFiManager.h"
 
 extern WiFiManager wm;
+extern SemaphoreHandle_t wmMutex;
 
 void initWM();
 

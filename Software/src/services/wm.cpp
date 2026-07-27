@@ -5,8 +5,10 @@
 #include "state/remote.h"
 
 WiFiManager wm;
+SemaphoreHandle_t wmMutex = nullptr;
 
 void initWM() {
+    if (wmMutex == nullptr) wmMutex = xSemaphoreCreateMutex();
     WiFi.useStaticBuffers(true);
     WiFi.begin();
 

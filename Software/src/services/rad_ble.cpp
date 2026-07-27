@@ -38,6 +38,8 @@ constexpr uint16_t W = radble::RESOURCE_WRITABLE |
                        radble::RESOURCE_LEASE_REQUIRED;
 
 radble::Resource RESOURCES[] = {
+    {"essential", "essential.live", "essential", "object", "", RS,
+     "{\"characteristic\":\"2010\",\"changeDriven\":true,\"maxRateHz\":4}"},
     {"device_name", "device.name", "setting", "string", "", RWP,
      "{\"maxBytes\":24,\"emptyResets\":true}"},
     {"left_shoulder", "button.leftShoulder", "button", "bool", "", RS,
@@ -855,6 +857,14 @@ String snapshot(radble::Surface surface, void*) {
             document["idleState"] = static_cast<int>(idleState);
             document["memoryPresent"] = isMemoryChipFound;
             document["scanning"] = NimBLEDevice::getScan()->isScanning();
+            break;
+        case radble::Surface::Essential:
+            document["state"] = stateName();
+            document["powered"] = true;
+            document["batteryPercent"] = getBatteryPercent();
+            document["charging"] = isCharging();
+            document["connectedDeviceCount"] =
+                static_cast<unsigned>(NimBLEDevice::getConnectedClients().size());
             break;
         case radble::Surface::Button:
             document["leftShoulder"] = digitalRead(pins::BTN_L_SHOULDER) == LOW;

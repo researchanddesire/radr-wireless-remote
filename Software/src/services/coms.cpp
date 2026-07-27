@@ -179,7 +179,8 @@ void initBLE() {
     ESP_LOGI(TAG_COMS, "Starting NimBLE Client");
 
     /** Initialize NimBLE and set the device name */
-    NimBLEDevice::init("RADR");
+    static String deviceName = radble::loadDeviceName("RADR");
+    NimBLEDevice::init(deviceName.c_str());
     NimBLEDevice::setMTU(512);
 
     /** Set the transmit power to maximum (9 dBm for ESP32) */
@@ -203,7 +204,7 @@ void initBLE() {
     server->setCallbacks(&peripheralCallbacks);
     if (initRadBle(server)) {
         NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
-        advertising->setName("RADR");
+        advertising->setName(deviceName.c_str());
         advertising->addServiceUUID(radBleServer.serviceUuid());
         advertising->enableScanResponse(true);
         advertising->start();

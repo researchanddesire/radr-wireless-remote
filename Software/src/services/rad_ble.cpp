@@ -30,6 +30,7 @@ constexpr uint16_t R = radble::RESOURCE_READABLE |
                        radble::RESOURCE_AVAILABLE;
 constexpr uint16_t RW = R | radble::RESOURCE_WRITABLE |
                         radble::RESOURCE_LEASE_REQUIRED;
+constexpr uint16_t RWP = RW | radble::RESOURCE_PERSISTENT;
 constexpr uint16_t RS = R | radble::RESOURCE_STREAMABLE;
 constexpr uint16_t RWT = RW | radble::RESOURCE_STREAMABLE;
 constexpr uint16_t W = radble::RESOURCE_WRITABLE |
@@ -37,6 +38,8 @@ constexpr uint16_t W = radble::RESOURCE_WRITABLE |
                        radble::RESOURCE_LEASE_REQUIRED;
 
 radble::Resource RESOURCES[] = {
+    {"device_name", "device.name", "setting", "string", "", RWP,
+     "{\"maxBytes\":24,\"emptyResets\":true}"},
     {"left_shoulder", "button.leftShoulder", "button", "bool", "", RS,
      "{\"events\":[\"click\"]}"},
     {"right_shoulder", "button.rightShoulder", "button", "bool", "", RS,

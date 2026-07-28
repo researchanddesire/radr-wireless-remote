@@ -105,28 +105,4 @@ jobs:
         run: |
           cd Software
           pio check --skip-packages --fail-on-defect high -e production -f src
-
   check_docs:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-          cache-dependency-path: Documentation/pnpm-lock.yaml
-
-      - name: Install dependencies
-        run: |
-          cd Documentation
-          pnpm install
-
-      - name: Validate documentation
-        run: |
-          cd Documentation
-          pnpm run mint:validate

@@ -4,7 +4,6 @@
 .vscode/launch.json
 .vscode/ipch
 
-Documentation/node_modules/
 
 scratch
 .github/scripts/__pycache__/

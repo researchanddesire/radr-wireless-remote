@@ -1006,28 +1006,39 @@ bool initRadBle(NimBLEServer* server) {
             resource.flags &= ~radble::RESOURCE_AVAILABLE;
     }
     const radble::Config config = {
-        .deviceType = "RADR",
-        .deviceName = "RADR",
-        .serviceUuid = radble::RADR_SERVICE_UUID,
-        .firmwareVersion = VERSION,
-        .build = FIRMWARE_BUILD_SHA,
+        .identity = {
+            .deviceType = "RADR",
+            .deviceName = "RADR",
+            .serviceUuid = radble::RADR_SERVICE_UUID,
+            .firmwareVersion = VERSION,
+            .build = FIRMWARE_BUILD_SHA,
+            .partitionLayout = nullptr,
+        },
         .capabilities = radble::CAP_BUTTON | radble::CAP_ENCODER |
                         (imuAvailable ? radble::CAP_IMU : 0) | radble::CAP_POWER |
                         radble::CAP_CONNECTIVITY | radble::CAP_INDICATOR |
                         radble::CAP_HAPTIC | radble::CAP_AUDIO |
                         radble::CAP_DISPLAY | radble::CAP_SENSOR_STREAM,
+        .channels = radble::CHANNEL_SENSOR_STREAM | radble::CHANNEL_BUTTON |
+                    radble::CHANNEL_ENCODER |
+                    (imuAvailable ? radble::CHANNEL_IMU : 0) |
+                    radble::CHANNEL_POWER | radble::CHANNEL_CONNECTIVITY |
+                    radble::CHANNEL_INDICATOR | radble::CHANNEL_HAPTIC |
+                    radble::CHANNEL_AUDIO | radble::CHANNEL_DISPLAY |
+                    radble::CHANNEL_BATTERY |
+                    radble::CHANNEL_APPLICATION_OTA |
+                    radble::CHANNEL_FILESYSTEM_OTA,
         .resources = RESOURCES,
         .resourceCount = sizeof(RESOURCES) / sizeof(RESOURCES[0]),
-        .commandHandler = handleCommand,
-        .snapshotHandler = snapshot,
-        .otaDataHandler = nullptr,
+        .callbacks = {
+            .commandHandler = handleCommand,
+            .snapshotHandler = snapshot,
+            .otaDataHandler = nullptr,
+            .otaSafetyHandler = prepareOta,
+            .leaseReleaseHandler = releaseDiagnosticOutputs,
+            .streamSafetyHandler = prepareStream,
+        },
         .context = nullptr,
-        .directOta = true,
-        .directFilesystemOta = true,
-        .otaSafetyHandler = prepareOta,
-        .leaseReleaseHandler = releaseDiagnosticOutputs,
-        .createSurfaceCharacteristics = true,
-        .streamSafetyHandler = prepareStream,
     };
     return radBleServer.begin(server, config);
 }

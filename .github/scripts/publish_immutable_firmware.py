@@ -224,6 +224,7 @@ def publish(args: argparse.Namespace) -> str:
         "deviceType": args.device_type,
         "version": version,
         "buildSha": args.build_sha,
+        "kind": args.kind,
         "storageProjectRef": PROJECT_REFS[args.track],
         "bucketId": f"{args.device_type}-firmware",
         "artifacts": [

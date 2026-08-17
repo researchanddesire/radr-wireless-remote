@@ -62,8 +62,21 @@ jobs:
           pio run --target buildfs -e staging
           pio run --target buildfs -e production
 
+      - name: Build merged web installers
+        run: |
+          for PIO_ENV in staging production; do
+            python .github/scripts/build_web_installer.py \
+              --profile esp32s3-16mb \
+              --build-dir "Software/.pio/build/$PIO_ENV" \
+              --filesystem "Software/.pio/build/$PIO_ENV/littlefs.bin" \
+              --partition-table Software/partition.csv \
+              --filesystem-partition spiffs \
+              --output "Software/.pio/build/$PIO_ENV/web-installer.bin"
+          done
+
       - name: Test immutable publisher
         run: |
+          python .github/scripts/test_build_web_installer.py
           python .github/scripts/test_publish_immutable_firmware.py
           python .github/scripts/test_release_workflow.py
 
@@ -76,6 +89,7 @@ jobs:
             Software/.pio/build/production/partitions.bin
             Software/.pio/build/production/bootloader.bin
             Software/.pio/build/production/littlefs.bin
+            Software/.pio/build/production/web-installer.bin
           retention-days: 1
 
   check:
@@ -105,3 +119,15 @@ jobs:
         run: |
           cd Software
           pio check --skip-packages --fail-on-defect high -e production -f src
+
+  check_docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify legacy documentation remains retired
+        run: |
+          if [[ -d Documentation ]]; then
+            echo "The retired in-repository documentation workspace was restored"
+            exit 1
+          fi

@@ -21,7 +21,13 @@ PROJECT_REFS = {
     "main": "acjajruwevyyatztbkdf",
     "staging": "meuaxbjzqrszxdvmacug",
 }
-VALID_ROLES = {"application", "filesystem", "bootloader", "partitions"}
+VALID_ROLES = {
+    "application",
+    "filesystem",
+    "bootloader",
+    "partitions",
+    "web-installer",
+}
 
 
 @dataclass(frozen=True)
@@ -58,6 +64,8 @@ def parse_artifact(value: str) -> Artifact:
     if role not in VALID_ROLES:
         raise argparse.ArgumentTypeError(f"unsupported artifact role: {role}")
     artifact = Artifact(role, Path(path), int(order), installable.lower() == "true")
+    if artifact.role == "web-installer" and artifact.installable:
+        raise argparse.ArgumentTypeError("web-installer artifacts must be non-installable")
     if not artifact.path.is_file() or artifact.size_bytes == 0:
         raise argparse.ArgumentTypeError(f"artifact is missing or empty: {artifact.path}")
     return artifact
@@ -148,6 +156,13 @@ def publish(args: argparse.Namespace) -> str:
     if not re.fullmatch(r"[0-9a-fA-F]{7,64}", args.build_sha):
         raise RuntimeError("build SHA must contain 7 to 64 hexadecimal characters")
     version = read_version(args.version_file)
+    web_installers = [
+        artifact for artifact in args.artifact if artifact.role == "web-installer"
+    ]
+    if any(artifact.installable for artifact in web_installers):
+        raise RuntimeError("web-installer artifacts must be non-installable")
+    if len(web_installers) != 1:
+        raise RuntimeError("exactly one web-installer artifact is required")
     installable = sorted(
         (artifact for artifact in args.artifact if artifact.installable),
         key=lambda artifact: artifact.install_order,
@@ -253,10 +268,13 @@ def publish(args: argparse.Namespace) -> str:
                 "publicUrl": uploads_by_name[artifact.filename]["publicUrl"],
                 "sha256": artifact.sha256,
                 "sizeBytes": artifact.size_bytes,
-                "required": True,
+                "required": artifact.installable,
                 "installOrder": artifact.install_order,
             }
-            for artifact in installable
+            for artifact in sorted(
+                [*installable, *web_installers],
+                key=lambda item: item.install_order,
+            )
         ],
     }
     published = request_json(f"{base_url}/api/internal/firmware/v1/releases", token, release_request)

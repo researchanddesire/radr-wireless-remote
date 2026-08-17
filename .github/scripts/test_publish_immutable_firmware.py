@@ -116,6 +116,7 @@ class PublisherTests(unittest.TestCase):
                 "web-installer",
                 [artifact["role"] for artifact in upload_payload["artifacts"]],
             )
+            self.assertEqual(upload_payload["kind"], "firmware")
             self.assertEqual(
                 [artifact["role"] for artifact in release_payload["artifacts"]],
                 ["filesystem", "application", "web-installer"],

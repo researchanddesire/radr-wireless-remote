@@ -77,6 +77,10 @@ class PublisherTests(unittest.TestCase):
             upload_payload = {}
             release_payload = {}
 
+            def create_provenance(_args, _version, _manifest, _application, path, order):
+                path.write_text('{"provenance":"test.token.value"}\n')
+                return publisher.Artifact("provenance", path, order, False), "test.token.value"
+
             def request_json(url, _token, payload):
                 if url.endswith("/uploads"):
                     upload_payload.update(payload)
@@ -109,6 +113,9 @@ class PublisherTests(unittest.TestCase):
                 mock.patch.object(publisher, "request_json", side_effect=request_json),
                 mock.patch.object(publisher, "upload_file"),
                 mock.patch.object(publisher, "verify_public_object"),
+                mock.patch.object(
+                    publisher, "create_provenance", side_effect=create_provenance
+                ),
             ):
                 self.assertEqual(publisher.publish(args), "release-id")
 
@@ -119,12 +126,13 @@ class PublisherTests(unittest.TestCase):
             self.assertEqual(upload_payload["kind"], "firmware")
             self.assertEqual(
                 [artifact["role"] for artifact in release_payload["artifacts"]],
-                ["filesystem", "application", "web-installer"],
+                ["filesystem", "application", "web-installer", "provenance"],
             )
             self.assertEqual(
                 [artifact["required"] for artifact in release_payload["artifacts"]],
-                [True, True, False],
+                [True, True, False, False],
             )
+            self.assertEqual(release_payload["provenance"], "test.token.value")
 
     def test_publish_checks_web_installer_non_installable_invariant_first(self):
         with tempfile.TemporaryDirectory() as directory:

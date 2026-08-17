@@ -3,6 +3,7 @@
 #include <LittleFS.h>
 #include <WiFi.h>
 
+#include "FirmwareProvenance.h"
 #include "constants/Version.h"
 #include "devices/device.h"
 #include "devices/registry.h"
@@ -42,6 +43,8 @@ radble::Resource RESOURCES[] = {
      "{\"characteristic\":\"2010\",\"changeDriven\":true,\"maxRateHz\":4}"},
     {"device_name", "device.name", "setting", "string", "", RWP,
      "{\"maxBytes\":24,\"emptyResets\":true}"},
+    {"firmware_provenance", "device.firmwareProvenance", "setting", "object",
+     "", R, ""},
     {"left_shoulder", "button.leftShoulder", "button", "bool", "", RS,
      "{\"events\":[\"click\"]}"},
     {"right_shoulder", "button.rightShoulder", "button", "bool", "", RS,
@@ -526,6 +529,15 @@ radble::Result handleCommand(JsonObjectConst request, void*) {
             document["value"] = PSEUDO_SLEEP_TIMEOUT;
         else if (path == "setting.sleepTimeoutMs")
             document["value"] = SLEEP_TIMEOUT;
+        else if (path == "device.firmwareProvenance") {
+            const auto snapshot = firmware::provenance::runningSnapshot(
+                FIRMWARE_TRACK, "radr", VERSION, FIRMWARE_BUILD_SHA);
+            document["origin"] = snapshot.origin;
+            document["keyId"] = snapshot.keyId;
+            document["provenanceId"] = snapshot.provenanceId;
+            document["imageSha256"] = snapshot.imageSha256;
+            document["compactJws"] = snapshot.token;
+        }
         else if (path == "connectivity.bleScan") {
             document["scanning"] = NimBLEDevice::getScan()->isScanning();
             document["discovered"] = getDiscoveredDevices().size();

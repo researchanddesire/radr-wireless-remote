@@ -21,6 +21,8 @@ struct DeviceReport {
     std::string currentVersion;
     std::string currentBuild;
     std::string firmwareHash;
+    int provenanceCapability = 1;
+    std::string firmwareProvenance;
     std::string chip;
     std::uint32_t chipRevision = 0;
     std::uint32_t chipCores = 0;
@@ -54,6 +56,9 @@ struct Decision {
     std::string nextHopVersion;
     std::string releaseId;
     std::string buildSha;
+    std::string firmwareOrigin;
+    std::string currentProvenance;
+    std::string provenance;
     std::string kind;
     std::array<Artifact, MAX_ARTIFACTS> artifacts{};
     std::size_t artifactCount = 0;
@@ -162,6 +167,9 @@ inline std::string serializeReport(const DeviceReport &report) {
         document["currentBuild"] = report.currentBuild;
     if (!report.firmwareHash.empty())
         document["firmwareHash"] = report.firmwareHash;
+    document["provenanceCapability"] = report.provenanceCapability;
+    if (!report.firmwareProvenance.empty())
+        document["firmwareProvenance"] = report.firmwareProvenance;
     if (!report.chip.empty()) document["chip"] = report.chip;
     document["chipRevision"] = report.chipRevision;
     if (report.chipCores > 0) document["chipCores"] = report.chipCores;
@@ -253,6 +261,16 @@ inline bool parseDecision(const std::string &payload,
     }
     parsed.trackChanged = document["trackChanged"].as<bool>();
     parsed.nextCheckSeconds = document["nextCheckSeconds"].as<std::uint32_t>();
+    if (!document["firmwareOrigin"].isNull() &&
+        !readRequiredString(document["firmwareOrigin"], parsed.firmwareOrigin)) {
+        error = "invalid firmware origin";
+        return false;
+    }
+    if (!document["currentProvenance"].isNull() &&
+        !readRequiredString(document["currentProvenance"], parsed.currentProvenance)) {
+        error = "invalid current firmware provenance";
+        return false;
+    }
     if (!parsed.shouldUpdate) {
         if (!document["update"].isNull() || !parsed.nextHopVersion.empty()) {
             error = "no-update response contains update data";
@@ -280,6 +298,11 @@ inline bool parseDecision(const std::string &payload,
         return false;
     } else if (canonicalResponse && parsed.buildSha.empty()) {
         error = "canonical update response is missing build SHA";
+        return false;
+    }
+    if (!update["provenance"].isNull() &&
+        !readRequiredString(update["provenance"], parsed.provenance)) {
+        error = "invalid update firmware provenance";
         return false;
     }
 

@@ -4,6 +4,7 @@
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <HTTPClient.h>
+#include "FirmwareProvenance.h"
 #include <components/TextButton.h>
 #include <constants/Colors.h>
 #include <constants/Sizes.h>
@@ -198,6 +199,15 @@ static void ossmPairingTask(void *pvParameters) {
     HTTPClient http;
     http.begin(url);
     http.addHeader("Content-Type", "application/json");
+    http.addHeader("X-RAD-Firmware-Provenance-Capability", "1");
+    const auto provenanceToken = firmware::provenance::currentToken();
+    if (!provenanceToken.empty()) {
+        http.addHeader("X-RAD-Firmware-Provenance", provenanceToken.c_str());
+        http.addHeader("X-RAD-Firmware-Provenance-ID",
+                       firmware::provenance::currentTokenId().c_str());
+        http.addHeader("X-RAD-Firmware-Image-SHA256",
+                       firmware::provenance::currentImageSha256().c_str());
+    }
 
     int httpCode = http.POST(body);
 

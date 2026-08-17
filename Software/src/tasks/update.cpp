@@ -67,6 +67,7 @@ firmware::DeviceReport makeDeviceReport() {
         nextUpdatePartition == nullptr ? 0 : nextUpdatePartition->size;
     report.psramSizeBytes = ESP.getPsramSize();
     report.partitionLayout = "radr-ota-v1";
+    firmware::provenance::reconcile(report);
     return report;
 }
 
@@ -161,6 +162,8 @@ bool isUpdateAvailable() {
         ESP_LOGE(UPDATE_TAG, "Firmware resolver failed: %s", error.c_str());
         return false;
     }
+    firmware::provenance::observeCurrent(report, decision);
+    firmware::provenance::stageUpdate(report, decision);
     ESP_LOGI(UPDATE_TAG,
              "Resolver assigned track=%s update=%s target=%s next=%s",
              decision.assignedTrack.c_str(),

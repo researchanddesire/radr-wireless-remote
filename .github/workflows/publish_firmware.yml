@@ -55,6 +55,7 @@ jobs:
       name: ${{ github.ref_name == 'main' && 'firmware-production' || 'firmware-staging' }}
     env:
       FIRMWARE_PUBLISH_TOKEN: ${{ secrets.FIRMWARE_PUBLISH_TOKEN }}
+      FIRMWARE_PROVENANCE_SIGNING_KEY_PEM: ${{ secrets.FIRMWARE_PROVENANCE_SIGNING_KEY_PEM }}
     steps:
       - name: Generate version-control token
         id: version_token
@@ -148,6 +149,7 @@ jobs:
       - name: Test publisher
         run: |
           python .github/scripts/test_build_web_installer.py
+          python .github/scripts/test_firmware_provenance.py
           python .github/scripts/test_publish_immutable_firmware.py
           python .github/scripts/test_release_workflow.py
 

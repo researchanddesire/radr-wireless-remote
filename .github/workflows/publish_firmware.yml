@@ -9,6 +9,8 @@ on:
       - "scripts/test_release_version.py"
       - ".github/scripts/publish_immutable_firmware.py"
       - ".github/scripts/test_publish_immutable_firmware.py"
+      - ".github/scripts/build_web_installer.py"
+      - ".github/scripts/test_build_web_installer.py"
       - ".github/scripts/release_workflow.py"
       - ".github/scripts/test_release_workflow.py"
       - ".github/workflows/finalize_release.yml"
@@ -53,6 +55,7 @@ jobs:
       name: ${{ github.ref_name == 'main' && 'firmware-production' || 'firmware-staging' }}
     env:
       FIRMWARE_PUBLISH_TOKEN: ${{ secrets.FIRMWARE_PUBLISH_TOKEN }}
+      FIRMWARE_PROVENANCE_SIGNING_KEY_PEM: ${{ secrets.FIRMWARE_PROVENANCE_SIGNING_KEY_PEM }}
     steps:
       - name: Generate version-control token
         id: version_token
@@ -100,6 +103,9 @@ jobs:
           SOURCE_VERSION="$(python scripts/release_version.py read --header Software/src/constants/Version.h)"
           BUMP_TYPE="$(python scripts/release_version.py bump-type --title "$PR_TITLE")"
           RESPONSE="$(curl --fail --silent --show-error \
+            --retry 5 \
+            --retry-delay 2 \
+            --retry-max-time 60 \
             --header "Authorization: Bearer $FIRMWARE_PUBLISH_TOKEN" \
             --header "Content-Type: application/json" \
             --data "$(jq -n \
@@ -142,6 +148,8 @@ jobs:
 
       - name: Test publisher
         run: |
+          python .github/scripts/test_build_web_installer.py
+          python .github/scripts/test_firmware_provenance.py
           python .github/scripts/test_publish_immutable_firmware.py
           python .github/scripts/test_release_workflow.py
 
@@ -161,6 +169,16 @@ jobs:
           pio run -e "$PIO_ENV"
           pio run -e "$PIO_ENV" --target buildfs
 
+      - name: Build merged web installer
+        run: |
+          python .github/scripts/build_web_installer.py \
+            --profile esp32s3-16mb \
+            --build-dir "Software/.pio/build/$PIO_ENV" \
+            --filesystem "Software/.pio/build/$PIO_ENV/littlefs.bin" \
+            --partition-table Software/partition.csv \
+            --filesystem-partition spiffs \
+            --output "Software/.pio/build/$PIO_ENV/web-installer.bin"
+
       - name: Publish validating release
         id: publish
         run: |
@@ -172,7 +190,8 @@ jobs:
             --artifact "filesystem:Software/.pio/build/$PIO_ENV/littlefs.bin:1:true" \
             --artifact "application:Software/.pio/build/$PIO_ENV/firmware.bin:2:true" \
             --artifact "bootloader:Software/.pio/build/$PIO_ENV/bootloader.bin:3:false" \
-            --artifact "partitions:Software/.pio/build/$PIO_ENV/partitions.bin:4:false"
+            --artifact "partitions:Software/.pio/build/$PIO_ENV/partitions.bin:4:false" \
+            --artifact "web-installer:Software/.pio/build/$PIO_ENV/web-installer.bin:5:false"
 
       - name: Candidate summary
         run: |

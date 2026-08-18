@@ -34,7 +34,7 @@ struct DiscoveredDevice;
 std::vector<DiscoveredDevice> &getDiscoveredDevices();
 void clearDiscoveredDevices();
 void connectToDiscoveredDevice(int index);
-void startScanWithTimeout(int timeoutMs, void (*onComplete)());
+bool startScanWithTimeout(int timeoutMs, void (*onComplete)());
 void onScanComplete();
 
 // Defined in remote.cpp — breaks circular dependency with stateMachine type
@@ -307,20 +307,28 @@ namespace actions {
         // disconnect from the network
         WiFi.disconnect(true);
 
-        wm.setConfigPortalBlocking(false);
-        wm.setConnectTimeout(30);
-        wm.setConnectRetries(5);
-        wm.setEnableConfigPortal(true);
-        wm.setCleanConnect(true);
-        wm.startConfigPortal("RADR Setup");
+        if (wmMutex != nullptr &&
+            xSemaphoreTake(wmMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            wm.setConfigPortalBlocking(false);
+            wm.setConnectTimeout(30);
+            wm.setConnectRetries(5);
+            wm.setEnableConfigPortal(true);
+            wm.setCleanConnect(true);
+            wm.startConfigPortal("RADR Setup");
+            xSemaphoreGive(wmMutex);
+        }
 
         // if the wifi is not currently connected then make a small task the
         // looks for the wifi connection and sends an event.
     };
 
     auto stopWiFiPortal = []() {
-        wm.setConfigPortalBlocking(true);
-        wm.stopConfigPortal();
+        if (wmMutex != nullptr &&
+            xSemaphoreTake(wmMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            wm.setConfigPortalBlocking(true);
+            wm.stopConfigPortal();
+            xSemaphoreGive(wmMutex);
+        }
     };
 
     auto enterDeepSleep = []() {

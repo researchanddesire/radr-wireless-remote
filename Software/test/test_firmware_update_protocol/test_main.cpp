@@ -12,10 +12,13 @@ const char *VALID_RESPONSE = R"json({
   "reportedTrack": "main",
   "assignedTrack": "staging",
   "trackChanged": true,
+  "firmwareOrigin": "official",
+  "currentProvenance": "current.jws.token",
   "currentVersion": "1.0.42",
   "targetVersion": "1.0.43",
   "nextHopVersion": "1.0.43",
   "update": {
+    "provenance": "target.jws.token",
     "releaseId": "00000000-0000-4000-8000-000000000001",
     "buildSha": "0123456789abcdef",
     "kind": "firmware",
@@ -42,6 +45,8 @@ void test_serializes_required_and_hardware_fields() {
         .currentBuild = "0123456789abcdef",
         .firmwareHash =
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        .provenanceCapability = 1,
+        .firmwareProvenance = "current.jws.token",
         .chip = "esp32",
         .chipRevision = 0,
         .chipCores = 2,
@@ -55,6 +60,9 @@ void test_serializes_required_and_hardware_fields() {
     TEST_ASSERT_EQUAL_STRING("radr", parsed["deviceType"]);
     TEST_ASSERT_EQUAL_INT(1, parsed["protocolVersion"]);
     TEST_ASSERT_EQUAL_STRING("main", parsed["reportedTrack"]);
+    TEST_ASSERT_EQUAL_INT(1, parsed["provenanceCapability"]);
+    TEST_ASSERT_EQUAL_STRING("current.jws.token",
+                             parsed["firmwareProvenance"]);
     TEST_ASSERT_EQUAL_UINT32(4194304, parsed["flashSizeBytes"]);
     TEST_ASSERT_EQUAL_UINT32(1310720, parsed["otaSlotSizeBytes"]);
     TEST_ASSERT_EQUAL_UINT32(0, parsed["chipRevision"]);
@@ -80,6 +88,11 @@ void test_parses_cross_track_update_and_orders_artifacts() {
     TEST_ASSERT_EQUAL_STRING("update-available", decision.reason.c_str());
     TEST_ASSERT_EQUAL_STRING("0123456789abcdef", decision.buildSha.c_str());
     TEST_ASSERT_EQUAL_STRING("staging", decision.assignedTrack.c_str());
+    TEST_ASSERT_EQUAL_STRING("official", decision.firmwareOrigin.c_str());
+    TEST_ASSERT_EQUAL_STRING("current.jws.token",
+                             decision.currentProvenance.c_str());
+    TEST_ASSERT_EQUAL_STRING("target.jws.token",
+                             decision.provenance.c_str());
     TEST_ASSERT_TRUE(decision.trackChanged);
     TEST_ASSERT_EQUAL_STRING("1.0.43", decision.nextHopVersion.c_str());
     TEST_ASSERT_EQUAL_UINT32(1, decision.artifactCount);

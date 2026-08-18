@@ -22,6 +22,7 @@ bool initDisplay();
 
 // Set screen brightness (0-255)
 void setScreenBrightness(uint8_t brightness);
+uint8_t getScreenBrightness();
 
 // Convenience functions
 void dimScreen();

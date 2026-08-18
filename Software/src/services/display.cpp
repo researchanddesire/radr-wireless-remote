@@ -50,6 +50,8 @@ void setScreenBrightness(uint8_t brightness)
     currentBrightness = brightness;
 }
 
+uint8_t getScreenBrightness() { return currentBrightness; }
+
 void dimScreen()
 {
     setScreenBrightness(BRIGHTNESS_DIM);

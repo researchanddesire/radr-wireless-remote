@@ -15,6 +15,8 @@
 #include <queue>
 #include <regex>
 
+#include "rad_ble.h"
+
 static const char *TAG_COMS = "COMS";
 
 static const NimBLEAdvertisedDevice *advDevice;
@@ -24,6 +26,26 @@ static uint32_t scanTimeMs =
 
 static std::queue<String> commandQueue;
 static std::vector<DiscoveredDevice> discoveredDevices;
+
+struct ScanMonitorRequest {
+    int timeoutMs;
+    void (*callback)();
+    uint32_t generation;
+};
+
+static volatile uint32_t scanGeneration = 0;
+
+class PeripheralCallbacks final : public NimBLEServerCallbacks {
+    void onConnect(NimBLEServer *, NimBLEConnInfo &connection) override {
+        radBleServer.onConnect(connection.getConnHandle());
+    }
+
+    void onDisconnect(NimBLEServer *server, NimBLEConnInfo &connection,
+                      int) override {
+        radBleServer.onDisconnect(connection.getConnHandle());
+        server->startAdvertising();
+    }
+} peripheralCallbacks;
 
 /** Define a class to handle the callbacks when scan events are received */
 class ScanCallbacks : public NimBLEScanCallbacks {
@@ -157,7 +179,9 @@ void initBLE() {
     ESP_LOGI(TAG_COMS, "Starting NimBLE Client");
 
     /** Initialize NimBLE and set the device name */
-    NimBLEDevice::init("OSSM-REMOTE");
+    static String deviceName = radble::loadDeviceName("RADR");
+    NimBLEDevice::init(deviceName.c_str());
+    NimBLEDevice::setMTU(512);
 
     /** Set the transmit power to maximum (9 dBm for ESP32) */
     NimBLEDevice::setPower(9); /** 9dBm */
@@ -175,6 +199,19 @@ void initBLE() {
      *  but will use more energy from both devices
      */
     pScan->setActiveScan(true);
+
+    NimBLEServer *server = NimBLEDevice::createServer();
+    server->setCallbacks(&peripheralCallbacks);
+    if (initRadBle(server)) {
+        NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
+        advertising->setName(deviceName.c_str());
+        advertising->addServiceUUID(radBleServer.serviceUuid());
+        advertising->enableScanResponse(true);
+        advertising->start();
+        ESP_LOGI(TAG_COMS, "RAD BLE peripheral advertising started");
+    } else {
+        ESP_LOGE(TAG_COMS, "RAD BLE peripheral initialization failed");
+    }
 
     /** Start scanning for advertisers */
     // pScan->start(scanTimeMs);
@@ -207,19 +244,33 @@ void connectToDiscoveredDevice(int index) {
     device = (*selectedDevice.factory)(selectedDevice.advertisedDevice);
 }
 
-void startScanWithTimeout(int timeoutMs, void (*onComplete)()) {
+bool startScanWithTimeout(int timeoutMs, void (*onComplete)()) {
     clearDiscoveredDevices();
     NimBLEScan *pScan = NimBLEDevice::getScan();
+    const uint32_t generation = ++scanGeneration;
+    if (pScan->isScanning()) pScan->stop();
+    if (!pScan->start(0)) {
+        ESP_LOGE(TAG_COMS, "Could not start BLE scan");
+        return false;
+    }
 
     // Start a task to monitor scanning and call callback
     // NOTE: Stack size must be large enough to handle the callback chain,
     // which includes state machine processing and UI operations
-    xTaskCreate(
+    auto *request = new ScanMonitorRequest{timeoutMs, onComplete, generation};
+    if (xTaskCreate(
         [](void *param) {
-            auto callback = (void (*)())param;
+            auto *request = static_cast<ScanMonitorRequest *>(param);
 
             // Wait for scan timeout
-            vTaskDelay(5000 / portTICK_PERIOD_MS);
+            vTaskDelay(pdMS_TO_TICKS(request->timeoutMs));
+
+            // A newer request owns the scanner and its completion callback.
+            if (request->generation != scanGeneration) {
+                delete request;
+                vTaskDelete(NULL);
+                return;
+            }
 
             // Stop scanning
             NimBLEScan *pScan = NimBLEDevice::getScan();
@@ -228,13 +279,19 @@ void startScanWithTimeout(int timeoutMs, void (*onComplete)()) {
             }
 
             // Call completion callback
-            if (callback) {
-                callback();
+            if (request->callback) {
+                request->callback();
             }
 
+            delete request;
             vTaskDelete(NULL);
         },
-        "scanMonitor", 8192, (void *)onComplete, 1, NULL);
-
-    pScan->start(0);
+        "scanMonitor", 8192, request, 1, NULL) != pdPASS) {
+        delete request;
+        ++scanGeneration;
+        pScan->stop();
+        ESP_LOGE(TAG_COMS, "Could not create BLE scan monitor task");
+        return false;
+    }
+    return true;
 }

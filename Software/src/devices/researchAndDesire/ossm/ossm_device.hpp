@@ -378,6 +378,27 @@ class OSSM : public Device {
         return operationMode == OssmMode::SimplePenetration;
     }
 
+    bool readControlSetting(const String &name, float &value) const override {
+        if (name == "speed") value = settings.speed;
+        else if (name == "stroke") value = settings.stroke;
+        else if (name == "depth") value = settings.depth;
+        else if (name == "sensation") value = settings.sensation;
+        else if (name == "pattern")
+            value = static_cast<int>(settings.pattern);
+        else
+            return false;
+        return true;
+    }
+
+    bool writeControlSetting(const String &name, int value) override {
+        if (name == "speed") return setSpeed(value);
+        if (name == "stroke") return setStroke(value);
+        if (name == "depth") return setDepth(value);
+        if (name == "sensation") return setSensation(value);
+        if (name == "pattern") return setPattern(value);
+        return false;
+    }
+
     void onDeviceMenuItemSelected(int index) override { setPattern(index); }
 
     void drawDeviceMenu() override {

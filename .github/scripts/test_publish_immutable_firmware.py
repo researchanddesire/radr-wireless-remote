@@ -126,11 +126,17 @@ class PublisherTests(unittest.TestCase):
             self.assertEqual(upload_payload["kind"], "firmware")
             self.assertEqual(
                 [artifact["role"] for artifact in release_payload["artifacts"]],
-                ["filesystem", "application", "web-installer", "provenance"],
+                [
+                    "filesystem",
+                    "application",
+                    "web-installer",
+                    "manifest",
+                    "provenance",
+                ],
             )
             self.assertEqual(
                 [artifact["required"] for artifact in release_payload["artifacts"]],
-                [True, True, False, False],
+                [True, True, False, False, False],
             )
             self.assertEqual(release_payload["provenance"], "test.token.value")
 
@@ -161,6 +167,49 @@ class PublisherTests(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, "must be non-installable"),
             ):
                 publisher.publish(args)
+
+    def test_release_includes_manifest_and_provenance(self):
+        application = publisher.Artifact(
+            "application", Path("firmware.bin"), 2, True
+        )
+        manifest = publisher.Artifact("manifest", Path("manifest.json"), 5, False)
+        provenance = publisher.Artifact(
+            "provenance", Path("provenance.json"), 7, False
+        )
+        self.assertEqual(
+            [
+                artifact.role
+                for artifact in publisher.complete_release_artifacts(
+                    [application], manifest, provenance
+                )
+            ],
+            ["application", "manifest", "provenance"],
+        )
+
+    def test_legacy_envelope_is_limited_to_old_production_schema(self):
+        old_schema = publisher.ControlPlaneHttpError(
+            400,
+            '{"issues":[{"code":"invalid_value","values":'
+            '["application","manifest","release"],"path":'
+            '["artifacts",6,"role"]}]}',
+        )
+        self.assertTrue(
+            publisher.requires_legacy_production_envelope("main", old_schema)
+        )
+        self.assertFalse(
+            publisher.requires_legacy_production_envelope("staging", old_schema)
+        )
+        self.assertFalse(
+            publisher.requires_legacy_production_envelope(
+                "main",
+                publisher.ControlPlaneHttpError(
+                    400,
+                    '{"issues":[{"code":"invalid_value","values":'
+                    '["application","provenance"],"path":'
+                    '["artifacts",6,"role"]}]}',
+                ),
+            )
+        )
 
 
 if __name__ == "__main__":

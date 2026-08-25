@@ -3,6 +3,8 @@
 
 #include <Arduino.h>
 
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "components/Icons.h"
@@ -46,16 +48,16 @@ struct MenuItem {
 
 // MainMenu
 
-static std::vector<MenuItem> mainMenu = {
+inline std::vector<MenuItem> mainMenu = {
     {MenuItemE::DEVICE_SEARCH, OSSM_CONTROLLER_NAME, researchAndDesireWaves},
     {MenuItemE::SETTINGS, SETTINGS_NAME, bitmap_settings},
     {MenuItemE::DEEP_SLEEP, DEEP_SLEEP_NAME, bitmap_sleep}};
 
-static const int numMainMenu = mainMenu.size();
+inline const int numMainMenu = mainMenu.size();
 
 // SettingsMenu
 
-static std::vector<MenuItem> settingsMenu = {
+inline std::vector<MenuItem> settingsMenu = {
     {MenuItemE::BACK, GO_BACK_NAME, bitmap_back},
     {MenuItemE::WIFI_SETTINGS, WIFI_SETTINGS_NAME, bitmap_wifi},
     // {MenuItemE::PAIRING, PAIRING_NAME, bitmap_link},
@@ -63,11 +65,11 @@ static std::vector<MenuItem> settingsMenu = {
     {MenuItemE::RESTART, RESTART_NAME, bitmap_restart},
 };
 
-static const int numSettingsMenu = settingsMenu.size();
+inline const int numSettingsMenu = settingsMenu.size();
 
 // OSSM Menu (shown in OSSM tab when connected)
 
-static std::vector<MenuItem> ossmMenu = {
+inline std::vector<MenuItem> ossmMenu = {
     {MenuItemE::OSSM_STROKE_ENGINE, "Stroke Engine", researchAndDesireWaves},
     {MenuItemE::OSSM_SIMPLE_PENETRATION, "Simple Penetration",
      researchAndDesireWaves},
@@ -78,6 +80,6 @@ static std::vector<MenuItem> ossmMenu = {
     {MenuItemE::OSSM_RESTART, "Restart OSSM", bitmap_restart},
 };
 
-static const int numOssmMenu = ossmMenu.size();
+inline const int numOssmMenu = ossmMenu.size();
 
 #endif

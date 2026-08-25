@@ -22,6 +22,11 @@
 #include "state/remote.h"
 #include "tasks/update.h"
 
+#if !defined(CONFIG_ESP_IPC_TASK_STACK_SIZE) || \
+    CONFIG_ESP_IPC_TASK_STACK_SIZE < 2048
+#error "RADR requires an ESP-IDF IPC task stack of at least 2048 bytes"
+#endif
+
 OneButton leftShoulderBtn;
 OneButton rightShoulderBtn;
 OneButton underLeftBtn;

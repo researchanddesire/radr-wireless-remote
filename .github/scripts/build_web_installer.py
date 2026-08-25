@@ -166,14 +166,14 @@ def merge_command(
         str(esptool or find_esptool()),
         "--chip",
         profile.chip,
-        "merge_bin",
+        "merge-bin",
         "--output",
         str(output),
-        "--flash_mode",
+        "--flash-mode",
         "keep",
-        "--flash_freq",
+        "--flash-freq",
         "keep",
-        "--flash_size",
+        "--flash-size",
         profile.flash_size,
     ]
     for offset, path in components:

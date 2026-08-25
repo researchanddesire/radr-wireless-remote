@@ -41,14 +41,14 @@ class LovenseDevice : public Device, public ButtplugIoProtocol {
             {"rx",
              DeviceCharacteristics{
                  NimBLEUUID(rx.c_str()),
-                 .notifyCallback =
-                     [this](NimBLERemoteCharacteristic *pRemoteCharacteristic,
-                            uint8_t *pData, size_t length, bool isNotify) {
-                         rxValue =
-                             String(reinterpret_cast<char *>(pData), length);
-                         ESP_LOGD("LOVENSE", "Notification received, value: %s",
-                                  rxValue.c_str());
-                     }}}};
+                 nullptr,
+                 nullptr,
+                 [this](NimBLERemoteCharacteristic *pRemoteCharacteristic,
+                        uint8_t *pData, size_t length, bool isNotify) {
+                     rxValue = String(reinterpret_cast<char *>(pData), length);
+                     ESP_LOGD("LOVENSE", "Notification received, value: %s",
+                              rxValue.c_str());
+                 }}}};
     }
 
     String rxValue = "";

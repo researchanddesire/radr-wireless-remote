@@ -26,7 +26,7 @@ const auto hasSoftwareUpdate =
 
 template <typename Event = right_button_pressed>
 const auto isOnline =
-    [](const Event &event) { return WiFiClass::status() == WL_CONNECTED; };
+    [](const Event &event) { return WiFi.status() == WL_CONNECTED; };
 
 template <typename Event = right_button_pressed>
 auto isOption = [](MenuItemE value) {

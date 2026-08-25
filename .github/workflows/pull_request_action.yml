@@ -118,7 +118,7 @@ jobs:
       - name: Check PlatformIO Project
         run: |
           cd Software
-          pio check --skip-packages --fail-on-defect high -e production -f src
+          pio check --fail-on-defect high -e production -f src
 
   check_docs:
     runs-on: ubuntu-latest

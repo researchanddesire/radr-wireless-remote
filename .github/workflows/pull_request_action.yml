@@ -48,7 +48,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install PlatformIO Core
-        run: pip install --upgrade platformio
+        run: pip install platformio==6.1.19
 
       - name: Build PlatformIO Project
         run: |
@@ -113,7 +113,7 @@ jobs:
           python-version: "3.9"
 
       - name: Install PlatformIO Core
-        run: pip install --upgrade platformio
+        run: pip install platformio==6.1.19
 
       - name: Check PlatformIO Project
         run: |

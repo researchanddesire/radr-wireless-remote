@@ -144,7 +144,7 @@ jobs:
           echo "bump=$BUMP_TYPE" >> "$GITHUB_OUTPUT"
 
       - name: Install PlatformIO
-        run: python -m pip install --upgrade platformio
+        run: python -m pip install platformio==6.1.19
 
       - name: Test publisher
         run: |

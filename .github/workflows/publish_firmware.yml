@@ -169,6 +169,9 @@ jobs:
           pio run -e "$PIO_ENV"
           pio run -e "$PIO_ENV" --target buildfs
 
+      - name: Install pinned esptool runtime
+        run: python -m pip install "$HOME/.platformio/packages/tool-esptoolpy"
+
       - name: Build merged web installer
         run: |
           python .github/scripts/build_web_installer.py \

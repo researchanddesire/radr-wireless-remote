@@ -62,6 +62,9 @@ jobs:
           pio run --target buildfs -e staging
           pio run --target buildfs -e production
 
+      - name: Install pinned esptool runtime
+        run: python -m pip install "$HOME/.platformio/packages/tool-esptoolpy"
+
       - name: Build merged web installers
         run: |
           for PIO_ENV in staging production; do

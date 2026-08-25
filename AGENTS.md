@@ -1,5 +1,11 @@
 # AGENTS.md
 
+## Technician Build PC
+
+- Use the `$build-pc` skill for the Research + Desire Windows workstation that technicians use to build and flash devices for sale.
+- Keep the workstation checkout on a clean, current `main`; preserve unexpected work with a stash or backup before synchronization.
+- Repair build-machine tooling, dependencies, and caches there. Reproduce source defects there, but fix tracked code or project configuration in this development repository and land the correction through the normal branch workflow.
+
 ## Branch and Release Policy
 
 - Persistent branches are lowercase `staging` and `main`.

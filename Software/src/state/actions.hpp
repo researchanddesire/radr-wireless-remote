@@ -42,7 +42,7 @@ void fireStateMachineDoneEvent();
 
 namespace actions {
 
-    auto clearPage = [](bool clearStatusbar = false) {
+    inline auto clearPage = [](bool clearStatusbar = false) {
         // small delay to ensure tasks are finished
         vTaskDelay(50 / portTICK_PERIOD_MS);
         if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
@@ -61,7 +61,7 @@ namespace actions {
         }
     };
 
-    auto clearScreen = []() {
+    inline auto clearScreen = []() {
         // small delay to ensure tasks are finished
         if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
             tft.fillScreen(Colors::black);
@@ -69,7 +69,7 @@ namespace actions {
         }
     };
 
-    auto disconnectImpl = [](bool quiet) {
+    inline auto disconnectImpl = [](bool quiet) {
         // Safety-critical: Ensure left encoder monitoring is stopped if the
         // device needs it
         if (device != nullptr &&
@@ -91,9 +91,9 @@ namespace actions {
         }
     };
 
-    auto disconnect = []() { disconnectImpl(false); };
+    inline auto disconnect = []() { disconnectImpl(false); };
 
-    auto drawPage = [](const TextPage &page) {
+    inline auto drawPage = [](const TextPage &page) {
         // Capture reference to static const object - safe since it lives in
         // flash memory
         return [&page]() {
@@ -104,7 +104,7 @@ namespace actions {
         };
     };
 
-    auto drawControl = []() {
+    inline auto drawControl = []() {
         // Safety-critical: Ensure left encoder monitoring is active if the
         // device needs it
         if (device != nullptr &&
@@ -118,9 +118,9 @@ namespace actions {
                                 1);
     };
 
-    auto search = []() { startScanWithTimeout(5000, onScanComplete); };
+    inline auto search = []() { startScanWithTimeout(5000, onScanComplete); };
 
-    auto drawDeviceList = []() {
+    inline auto drawDeviceList = []() {
         // Stop scanning when we enter the device list
         NimBLEScan *pScan = NimBLEDevice::getScan();
         if (pScan->isScanning()) {
@@ -131,13 +131,13 @@ namespace actions {
         drawDeviceListMenu();
     };
 
-    auto play = [](BuzzerPattern pattern) {
+    inline auto play = [](BuzzerPattern pattern) {
         return [](BuzzerPattern pattern) { playBuzzerPattern(pattern); };
     };
 
-    constexpr auto startTask = [](auto task, const char *taskName,
-                                  TaskHandle_t handle, uint8_t size = 10,
-                                  uint8_t core = 1) {
+    inline constexpr auto startTask = [](auto task, const char *taskName,
+                                         TaskHandle_t handle, uint8_t size = 10,
+                                         uint8_t core = 1) {
         return [task, taskName, handle, size, core]() mutable {
             xTaskCreatePinnedToCore(task, taskName,
                                     size * configMINIMAL_STACK_SIZE, nullptr, 1,
@@ -145,49 +145,49 @@ namespace actions {
         };
     };
 
-    auto selectDevice = []() { connectToDiscoveredDevice(currentOption); };
+    inline auto selectDevice = []() { connectToDiscoveredDevice(currentOption); };
 
-    auto clearDeviceList = []() { clearDiscoveredDevices(); };
+    inline auto clearDeviceList = []() { clearDiscoveredDevices(); };
 
-    auto stop = []() {
+    inline auto stop = []() {
         if (device == nullptr) {
             return;
         }
         device->onPause();
     };
 
-    auto softPause = []() {
+    inline auto softPause = []() {
         if (device == nullptr) {
             return;
         }
         device->onPause();
     };
 
-    auto resume = []() {
+    inline auto resume = []() {
         if (device == nullptr) {
             return;
         }
         device->onResume();
     };
 
-    auto start = []() {
+    inline auto start = []() {
         if (device == nullptr) {
             return;
         }
         device->onConnect();
     };
 
-    auto drawDeviceMenu = []() { device->drawDeviceMenu(); };
+    inline auto drawDeviceMenu = []() { device->drawDeviceMenu(); };
 
-    auto onDeviceMenuItemSelected = []() {
+    inline auto onDeviceMenuItemSelected = []() {
         device->onDeviceMenuItemSelected(currentOption);
     };
 
-    auto checkForUpdate = []() {
+    inline auto checkForUpdate = []() {
         // TODO: basically just say yes.
     };
 
-    auto drawMainMenu = []() {
+    inline auto drawMainMenu = []() {
         // Release all individual LED controls back to global control
         releaseAllIndividualLeds();
         setLed(LEDColors::idle, 50,
@@ -209,18 +209,18 @@ namespace actions {
         drawMenuWithTabs();
     };
 
-    auto sendOssmRestart = []() {
+    inline auto sendOssmRestart = []() {
         if (device == nullptr) return;
         device->onRestart();
     };
 
     // Quiet disconnect: cleanup without buzzer/LED (used during expected
     // restart flow where we don't want to alarm the user)
-    auto disconnectQuiet = []() { disconnectImpl(true); };
+    inline auto disconnectQuiet = []() { disconnectImpl(true); };
 
-    static TimerHandle_t ossmRestartTimer = nullptr;
+    inline TimerHandle_t ossmRestartTimer = nullptr;
 
-    auto startOssmRestartWait = []() {
+    inline auto startOssmRestartWait = []() {
         if (ossmRestartTimer != nullptr) {
             xTimerDelete(ossmRestartTimer, 0);
         }
@@ -232,21 +232,21 @@ namespace actions {
         xTimerStart(ossmRestartTimer, 0);
     };
 
-    auto cancelOssmRestartWait = []() {
+    inline auto cancelOssmRestartWait = []() {
         if (ossmRestartTimer != nullptr) {
             xTimerDelete(ossmRestartTimer, 0);
             ossmRestartTimer = nullptr;
         }
     };
 
-    auto sendOssmUpdate = []() {
+    inline auto sendOssmUpdate = []() {
         if (device == nullptr) return;
         device->onUpdate();
     };
 
-    static TimerHandle_t ossmUpdateTimer = nullptr;
+    inline TimerHandle_t ossmUpdateTimer = nullptr;
 
-    auto startOssmUpdateWait = []() {
+    inline auto startOssmUpdateWait = []() {
         if (ossmUpdateTimer != nullptr) {
             xTimerDelete(ossmUpdateTimer, 0);
         }
@@ -258,31 +258,31 @@ namespace actions {
         xTimerStart(ossmUpdateTimer, 0);
     };
 
-    auto cancelOssmUpdateWait = []() {
+    inline auto cancelOssmUpdateWait = []() {
         if (ossmUpdateTimer != nullptr) {
             xTimerDelete(ossmUpdateTimer, 0);
             ossmUpdateTimer = nullptr;
         }
     };
 
-    auto checkOssmUpdate = []() { startOssmUpdateCheck(); };
+    inline auto checkOssmUpdate = []() { startOssmUpdateCheck(); };
 
-    auto sendStrokeEngine = []() {
+    inline auto sendStrokeEngine = []() {
         if (device == nullptr) return;
         device->enterStrokeEngineMode();
     };
 
-    auto sendSimplePenetration = []() {
+    inline auto sendSimplePenetration = []() {
         if (device == nullptr) return;
         device->enterSimplePenetrationMode();
     };
 
-    auto sendStreaming = []() {
+    inline auto sendStreaming = []() {
         if (device == nullptr) return;
         device->enterStreamingMode();
     };
 
-    auto drawSettingsMenu = []() {
+    inline auto drawSettingsMenu = []() {
         tabBarHeight = 0;
         activeMenu = &settingsMenu;
         activeMenuCount = numSettingsMenu;
@@ -290,15 +290,15 @@ namespace actions {
         drawMenu();
     };
 
-    auto espRestart = []() {
+    inline auto espRestart = []() {
         playBuzzerPattern(BuzzerPattern::SHUTDOWN);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
         esp_restart();
     };
 
-    auto espSilentRestart = []() { esp_restart(); };
+    inline auto espSilentRestart = []() { esp_restart(); };
 
-    auto startWiFiPortal = []() {
+    inline auto startWiFiPortal = []() {
         // Give a second for any pending MQTT messages to be sent before
         // disconnecting WiFi Otherwise we lose this state_change message until
         // the device comes back online.
@@ -322,7 +322,7 @@ namespace actions {
         // looks for the wifi connection and sends an event.
     };
 
-    auto stopWiFiPortal = []() {
+    inline auto stopWiFiPortal = []() {
         if (wmMutex != nullptr &&
             xSemaphoreTake(wmMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             wm.setConfigPortalBlocking(true);
@@ -331,7 +331,7 @@ namespace actions {
         }
     };
 
-    auto enterDeepSleep = []() {
+    inline auto enterDeepSleep = []() {
         // Disconnect from any connected devices first
         disconnect();
 
@@ -369,6 +369,6 @@ namespace actions {
         espSilentRestart();
     };
 
-    auto checkOssmPairing = []() { startOssmPairingCheck(); };
+    inline auto checkOssmPairing = []() { startOssmPairingCheck(); };
 
 }  // namespace actions

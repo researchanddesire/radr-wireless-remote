@@ -48,7 +48,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install PlatformIO Core
-        run: pip install --upgrade platformio
+        run: pip install platformio==6.1.19
 
       - name: Build PlatformIO Project
         run: |
@@ -61,6 +61,9 @@ jobs:
           cd Software
           pio run --target buildfs -e staging
           pio run --target buildfs -e production
+
+      - name: Install pinned esptool runtime
+        run: python -m pip install "$HOME/.platformio/packages/tool-esptoolpy"
 
       - name: Build merged web installers
         run: |
@@ -110,14 +113,15 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.9"
+          python-version: "3.12"
 
       - name: Install PlatformIO Core
-        run: pip install --upgrade platformio
+        run: pip install platformio==6.1.19
 
       - name: Check PlatformIO Project
         run: |
           cd Software
+          pio pkg install -e production
           pio check --skip-packages --fail-on-defect high -e production -f src
 
   check_docs:

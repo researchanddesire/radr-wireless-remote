@@ -71,9 +71,9 @@ class BuildWebInstallerTests(unittest.TestCase):
             profile, Path("merged.bin"), [], Path("esptool.py")
         )
         self.assertIn("esp32s3", command)
-        self.assertEqual(command[command.index("--flash_mode") + 1], "keep")
-        self.assertEqual(command[command.index("--flash_freq") + 1], "keep")
-        self.assertEqual(command[command.index("--flash_size") + 1], "16MB")
+        self.assertEqual(command[command.index("--flash-mode") + 1], "keep")
+        self.assertEqual(command[command.index("--flash-freq") + 1], "keep")
+        self.assertEqual(command[command.index("--flash-size") + 1], "16MB")
 
     def test_validation_checks_magic_and_exact_components(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -235,9 +235,10 @@ class OSSM : public Device {
                     }
 
                     ESP_LOGI(TAG, "Pattern: %s, %d", name.c_str(), idx);
-                    this->menu.push_back(MenuItem{MenuItemE::DEVICE_MENU_ITEM,
-                                                  name, icon, description,
-                                                  .metaIndex = idx});
+                    MenuItem menuItem{MenuItemE::DEVICE_MENU_ITEM, name, icon,
+                                      description};
+                    menuItem.metaIndex = idx;
+                    this->menu.push_back(menuItem);
                 }
 
                 updatePatternNameFromState();

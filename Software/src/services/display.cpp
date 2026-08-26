@@ -27,9 +27,13 @@ SemaphoreHandle_t displayMutex = xSemaphoreCreateMutex();
 bool initDisplay()
 {
     // Initialize PWM for backlight control
-    ledcSetup(BACKLIGHT_PWM_CHANNEL, BACKLIGHT_PWM_FREQ, BACKLIGHT_PWM_RESOLUTION);
-    ledcAttachPin(pins::TFT_BL, BACKLIGHT_PWM_CHANNEL);
-    ledcWrite(BACKLIGHT_PWM_CHANNEL, BRIGHTNESS_FULL);
+    if (!ledcAttachChannel(pins::TFT_BL, BACKLIGHT_PWM_FREQ,
+                           BACKLIGHT_PWM_RESOLUTION,
+                           BACKLIGHT_PWM_CHANNEL)) {
+        ESP_LOGE(TAG, "Failed to attach the display backlight PWM channel");
+        return false;
+    }
+    ledcWriteChannel(BACKLIGHT_PWM_CHANNEL, BRIGHTNESS_FULL);
     currentBrightness = BRIGHTNESS_FULL;
 
     SPI.begin(pins::TFT_SCLK, -1, pins::TFT_MOSI, pins::TFT_CS);
@@ -46,7 +50,7 @@ bool initDisplay()
 
 void setScreenBrightness(uint8_t brightness)
 {
-    ledcWrite(BACKLIGHT_PWM_CHANNEL, brightness);
+    ledcWriteChannel(BACKLIGHT_PWM_CHANNEL, brightness);
     currentBrightness = brightness;
 }
 

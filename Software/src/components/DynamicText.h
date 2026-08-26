@@ -1,6 +1,8 @@
 #ifndef DYNAMICTEXT_H
 #define DYNAMICTEXT_H
 
+#include <string>
+
 #include "DisplayObject.h"
 #include "constants/Colors.h"
 #include "constants/Strings.h"

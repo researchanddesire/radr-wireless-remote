@@ -103,28 +103,23 @@ void setup() {
 
     setupAnimatedIcons();
     setupIdleMonitor();
-
-    xTaskCreatePinnedToCore(
-        [](void *pvParameters) {
-            while (true) {
-                vTaskDelay(10);
-                leftShoulderBtn.tick();
-                rightShoulderBtn.tick();
-                underLeftBtn.tick();
-                underCenterBtn.tick();
-                underRightBtn.tick();
-                if (wmMutex != nullptr &&
-                    xSemaphoreTake(wmMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                    wm.process();
-                    xSemaphoreGive(wmMutex);
-                }
-            }
-        },
-        "buttonTask", 6 * configMINIMAL_STACK_SIZE, NULL,
-        configMAX_PRIORITIES - 1, NULL, 0);
 }
 
 void loop() {
-    // delete the loop task. Everything is managed by the state machine now.
-    vTaskDelete(NULL);
+    leftShoulderBtn.tick();
+    rightShoulderBtn.tick();
+    underLeftBtn.tick();
+    underCenterBtn.tick();
+    underRightBtn.tick();
+    processScanMonitor();
+    processAnimatedIcons();
+    processIdleMonitor();
+
+    if (wmMutex != nullptr &&
+        xSemaphoreTake(wmMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        wm.process();
+        xSemaphoreGive(wmMutex);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(10));
 }

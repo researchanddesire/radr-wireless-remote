@@ -1,4 +1,5 @@
 #include "leds.h"
+#include "utils/psramTask.h"
 #include <Arduino.h>
 
 #include <constants/Colors.h>
@@ -122,9 +123,8 @@ void initFastLEDs() {
 
     ESP_LOGI(TAG, "FastLEDs initialization complete.");
 
-    xTaskCreatePinnedToCore(ledsTask, ledsTaskName,
-                            5 * configMINIMAL_STACK_SIZE, &ledState,
-                            tskIDLE_PRIORITY, nullptr, 1);
+    createPsramTask(ledsTask, ledsTaskName, 5 * configMINIMAL_STACK_SIZE,
+                    &ledState, tskIDLE_PRIORITY, nullptr, 1);
 
     vTaskDelay(100);
     setLed(LEDColors::logoBlue, 255, 1500);

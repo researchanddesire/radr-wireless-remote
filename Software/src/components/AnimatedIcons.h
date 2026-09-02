@@ -2,6 +2,7 @@
 #define LOCKBOX_ANIMATEDICONS_H
 
 #include <Adafruit_GFX.h>
+#include "utils/psramTask.h"
 #include <Adafruit_ST7789.h>
 #include <Fonts/FreeSans9pt7b.h>
 #include <freertos/semphr.h>
@@ -321,8 +322,8 @@ static void setupAnimatedIcons() {
         }
     };
 
-    xTaskCreatePinnedToCore(task, "draw_icons", 4 * configMINIMAL_STACK_SIZE,
-                            nullptr, tskIDLE_PRIORITY, nullptr, 0);
+    createPsramTask(task, "draw_icons", 4 * configMINIMAL_STACK_SIZE, nullptr,
+                    tskIDLE_PRIORITY, nullptr, 0);
 }
 
 #endif  // LOCKBOX_ANIMATEDICONS_H

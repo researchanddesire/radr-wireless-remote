@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "utils/psramTask.h"
 
 #include <Adafruit_GFX.h>
 #include <Fonts/FreeSans9pt7b.h>
@@ -98,9 +99,9 @@ namespace actions {
         // flash memory
         return [&page]() {
             clearPage();
-            xTaskCreatePinnedToCore(drawPageTask, "drawPageTask",
-                                    5 * configMINIMAL_STACK_SIZE,
-                                    const_cast<TextPage *>(&page), 5, NULL, 1);
+            createPsramTask(drawPageTask, "drawPageTask",
+                            5 * configMINIMAL_STACK_SIZE,
+                            const_cast<TextPage *>(&page), 5, NULL, 1);
         };
     };
 
@@ -113,9 +114,7 @@ namespace actions {
         }
 
         // Single task creation with immediate UI rendering
-        xTaskCreatePinnedToCore(drawControllerTask, "drawControllerTask",
-                                16 * configMINIMAL_STACK_SIZE, device, 5, NULL,
-                                1);
+        startControllerTask(device);
     };
 
     inline auto search = []() { startScanWithTimeout(5000, onScanComplete); };

@@ -1,4 +1,5 @@
 #include "leftEncoderMonitor.h"
+#include "utils/psramTask.h"
 
 #include "devices/device.h"
 #include "encoder.h"
@@ -49,24 +50,24 @@ void leftEncoderMonitorTask(void *pvParameters) {
 
     // Clean up task handle when exiting
     leftEncoderTaskHandle = nullptr;
-    vTaskDelete(nullptr);
+    exitPsramTask();
 }
 
 void startLeftEncoderMonitoring() {
     // Kill existing task if it exists
     if (leftEncoderTaskHandle != nullptr) {
-        vTaskDelete(leftEncoderTaskHandle);
+        deletePsramTask(leftEncoderTaskHandle);
         leftEncoderTaskHandle = nullptr;
     }
 
-    xTaskCreatePinnedToCore(leftEncoderMonitorTask, "leftEncoderMonitor",
-                            4 * configMINIMAL_STACK_SIZE, nullptr, 5,
-                            &leftEncoderTaskHandle, 1);
+    createPsramTask(leftEncoderMonitorTask, "leftEncoderMonitor",
+                    4 * configMINIMAL_STACK_SIZE, nullptr, 5,
+                    &leftEncoderTaskHandle, 1);
 }
 
 void stopLeftEncoderMonitoring() {
     if (leftEncoderTaskHandle != nullptr) {
-        vTaskDelete(leftEncoderTaskHandle);
+        deletePsramTask(leftEncoderTaskHandle);
         leftEncoderTaskHandle = nullptr;
     }
 }

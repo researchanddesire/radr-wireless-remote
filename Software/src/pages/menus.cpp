@@ -1,4 +1,5 @@
 #include "menus.h"
+#include "utils/psramTask.h"
 
 #include <Fonts/FreeSans9pt7b.h>
 #include <components/DynamicText.h>
@@ -10,6 +11,7 @@
 #include <state/remote.h>
 
 #include "displayUtils.h"
+#include "controller.h"
 #include "services/display.h"
 
 TaskHandle_t menuTaskHandle = NULL;
@@ -389,40 +391,43 @@ void drawMenuTask(void *pvParameters) {
 
     // Mark as finished before self-delete so creator can proceed safely
     menuTaskHandle = NULL;
-    vTaskDelete(NULL);
+    exitPsramTask();
 }
 
-void drawMenu() {
+void stopMenuTask() {
     // If an existing task is running, request cooperative exit and wait
     if (menuTaskHandle != NULL) {
         menuTaskExitRequested = true;
-        // Reduced timeout for faster transitions
         const TickType_t waitStart = xTaskGetTickCount();
-        const TickType_t waitTimeout =
-            pdMS_TO_TICKS(50);  // Reduced from 200ms to 50ms
+        const TickType_t waitTimeout = pdMS_TO_TICKS(100);
         while (menuTaskHandle != NULL &&
                (xTaskGetTickCount() - waitStart) < waitTimeout) {
             vTaskDelay(1);
         }
         // If still not null after timeout, force cleanup
         if (menuTaskHandle != NULL) {
-            vTaskSuspend(menuTaskHandle);
-            vTaskDelete(menuTaskHandle);
+            TaskHandle_t stuck = menuTaskHandle;
             menuTaskHandle = NULL;
+            vTaskSuspend(stuck);
+            deletePsramTask(stuck);
         }
     }
-
-    // Reset exit flag before creating a new task
     menuTaskExitRequested = false;
+}
+
+void drawMenu() {
+    stopMenuTask();
+    // The controller task and the menu task both tick device->displayObjects;
+    // make sure only one of them is alive.
+    stopControllerTask();
 
     ESP_LOGD("MENU", "Drawing menu");
 
     clearPage();
     // Reduced delay for faster startup
     vTaskDelay(10 / portTICK_PERIOD_MS);  // Reduced from 50ms to 10ms
-    xTaskCreatePinnedToCore(drawMenuTask, "drawMenuTask",
-                            5 * configMINIMAL_STACK_SIZE, NULL, 5,
-                            &menuTaskHandle, 1);
+    createPsramTask(drawMenuTask, "drawMenuTask", 5 * configMINIMAL_STACK_SIZE,
+                    NULL, 5, &menuTaskHandle, 1);
 }
 
 // Device list management
@@ -510,7 +515,7 @@ void drawDeviceListTask(void *pvParameters) {
     }
     
     deviceListTaskHandle = NULL;
-    vTaskDelete(NULL);
+    exitPsramTask();
 }
 
 void drawDeviceListMenu() {
@@ -525,7 +530,7 @@ void drawDeviceListMenu() {
         }
         if (deviceListTaskHandle != NULL) {
             vTaskSuspend(deviceListTaskHandle);
-            vTaskDelete(deviceListTaskHandle);
+            deletePsramTask(deviceListTaskHandle);
             deviceListTaskHandle = NULL;
         }
     }
@@ -552,7 +557,7 @@ void drawDeviceListMenu() {
     TextButton retryButton(RETRY_STRING, pins::BTN_UNDER_C, (Display::WIDTH - 70) / 2, buttonY);
     retryButton.tick();
 
-    xTaskCreatePinnedToCore(drawDeviceListTask, "drawDeviceListTask",
-                            5 * configMINIMAL_STACK_SIZE, NULL, 5,
-                            &deviceListTaskHandle, 1);
+    createPsramTask(drawDeviceListTask, "drawDeviceListTask",
+                    5 * configMINIMAL_STACK_SIZE, NULL, 5, &deviceListTaskHandle,
+                    1);
 }

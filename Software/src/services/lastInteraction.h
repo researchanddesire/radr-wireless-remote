@@ -2,6 +2,7 @@
 #define LOCKBOX_LASTINTERACTION_H
 
 #include <Arduino.h>
+#include "utils/psramTask.h"
 #include "display.h"
 #include "esp_log.h"
 
@@ -73,8 +74,8 @@ inline void setupIdleMonitor() {
         }
     };
 
-    xTaskCreatePinnedToCore(task, "idle_monitor", 4 * configMINIMAL_STACK_SIZE,
-                            nullptr, tskIDLE_PRIORITY, nullptr, 0);
+    createPsramTask(task, "idle_monitor", 4 * configMINIMAL_STACK_SIZE, nullptr,
+                    tskIDLE_PRIORITY, nullptr, 0);
 }
 
 #endif // LOCKBOX_LASTINTERACTION_H

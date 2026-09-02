@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "utils/psramTask.h"
 #include "controller.h"
 #include <components/TextButton.h>
 #include <constants.h>
@@ -8,8 +9,44 @@
 #include <components/Image.h>
 #include <devices/researchAndDesire/ossm/ossm_device.hpp>
 #include <components/LinearRailGraph.h>
+#include <pages/menus.h>
 
 using namespace sml;
+
+static TaskHandle_t controllerTaskHandle = nullptr;
+static volatile bool controllerExitRequested = false;
+
+void stopControllerTask()
+{
+    if (controllerTaskHandle == nullptr) return;
+    controllerExitRequested = true;
+    const TickType_t waitStart = xTaskGetTickCount();
+    while (controllerTaskHandle != nullptr &&
+           (xTaskGetTickCount() - waitStart) < pdMS_TO_TICKS(300)) {
+        vTaskDelay(1);
+    }
+    if (controllerTaskHandle != nullptr) {
+        // Task did not exit cooperatively; force it and clean up its objects.
+        TaskHandle_t stuck = controllerTaskHandle;
+        controllerTaskHandle = nullptr;
+        vTaskSuspend(stuck);
+        deletePsramTask(stuck);
+        if (device != nullptr) device->displayObjects.clear();
+        ESP_LOGW(TAG, "Controller task force-stopped");
+    }
+    controllerExitRequested = false;
+}
+
+void startControllerTask(Device *targetDevice)
+{
+    stopMenuTask();
+    stopControllerTask();
+    controllerExitRequested = false;
+    createPsramTask(drawControllerTask, "drawControllerTask",
+                    16 * configMINIMAL_STACK_SIZE, targetDevice, 5,
+                    &controllerTaskHandle, 1);
+}
+
 void drawControllerTask(void *pvParameters)
 {
     clearPage();
@@ -19,7 +56,7 @@ void drawControllerTask(void *pvParameters)
 
     // wait until the device is connected
     ESP_LOGI(TAG, "Waiting for device to connect");
-    while (!device->isConnected)
+    while (!device->isConnected && !controllerExitRequested)
     {
         // TODO: UI / UX here.
         vTaskDelay(10 / portTICK_PERIOD_MS);
@@ -54,7 +91,7 @@ void drawControllerTask(void *pvParameters)
                stateMachine->is("simple_penetration_control"_s);
     };
 
-    while (isInCorrectState() && device != nullptr)
+    while (isInCorrectState() && device != nullptr && !controllerExitRequested)
     {
         currentLeftShoulderState = digitalRead(pins::BTN_L_SHOULDER);
         currentRightShoulderState = digitalRead(pins::BTN_R_SHOULDER);
@@ -96,6 +133,7 @@ void drawControllerTask(void *pvParameters)
 
         for (auto &displayObject : device->displayObjects)
         {
+            if (controllerExitRequested) break;
             displayObject->tick();
             vTaskDelay(1 / portTICK_PERIOD_MS);
         }
@@ -105,10 +143,13 @@ void drawControllerTask(void *pvParameters)
     }
 
     // unique_ptr will clean up automatically when the device is destroyed or vector cleared
-    if (device != nullptr)
+    if (device != nullptr && !controllerExitRequested)
     {
+        // Normal exit (state left the control screen): release UI objects.
+        // On a requested stop the new owner clears them itself.
         device->displayObjects.clear();
     }
 
-    vTaskDelete(NULL);
+    controllerTaskHandle = nullptr;
+    exitPsramTask();
 }

@@ -28,5 +28,6 @@ std::vector<DiscoveredDevice> &getDiscoveredDevices();
 void clearDiscoveredDevices();
 void connectToDiscoveredDevice(int index);
 bool startScanWithTimeout(int timeoutMs, void (*onComplete)());
+void processScanMonitor();
 
 #endif

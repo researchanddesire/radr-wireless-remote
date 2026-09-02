@@ -420,9 +420,13 @@ void drawMenu() {
     clearPage();
     // Reduced delay for faster startup
     vTaskDelay(10 / portTICK_PERIOD_MS);  // Reduced from 50ms to 10ms
-    xTaskCreatePinnedToCore(drawMenuTask, "drawMenuTask",
-                            5 * configMINIMAL_STACK_SIZE, NULL, 5,
-                            &menuTaskHandle, 1);
+    const BaseType_t result = xTaskCreatePinnedToCore(
+        drawMenuTask, "drawMenuTask", 5 * configMINIMAL_STACK_SIZE, NULL, 5,
+        &menuTaskHandle, 1);
+    if (result != pdPASS) {
+        menuTaskHandle = NULL;
+        ESP_LOGE("MENU", "Could not create menu drawing task");
+    }
 }
 
 // Device list management
@@ -552,7 +556,11 @@ void drawDeviceListMenu() {
     TextButton retryButton(RETRY_STRING, pins::BTN_UNDER_C, (Display::WIDTH - 70) / 2, buttonY);
     retryButton.tick();
 
-    xTaskCreatePinnedToCore(drawDeviceListTask, "drawDeviceListTask",
-                            5 * configMINIMAL_STACK_SIZE, NULL, 5,
-                            &deviceListTaskHandle, 1);
+    const BaseType_t result = xTaskCreatePinnedToCore(
+        drawDeviceListTask, "drawDeviceListTask", 5 * configMINIMAL_STACK_SIZE,
+        NULL, 5, &deviceListTaskHandle, 1);
+    if (result != pdPASS) {
+        deviceListTaskHandle = NULL;
+        ESP_LOGE("DEVICE_LIST", "Could not create device-list drawing task");
+    }
 }

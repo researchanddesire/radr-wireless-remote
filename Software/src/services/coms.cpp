@@ -10,10 +10,13 @@
 
 #include <Arduino.h>
 
-#include <NimBLEDevice.h>
-#include <esp_log.h>
+#include <atomic>
 #include <queue>
 #include <regex>
+
+#include <NimBLEDevice.h>
+#include <esp_log.h>
+#include <freertos/timers.h>
 
 #include "rad_ble.h"
 
@@ -27,13 +30,11 @@ static uint32_t scanTimeMs =
 static std::queue<String> commandQueue;
 static std::vector<DiscoveredDevice> discoveredDevices;
 
-struct ScanMonitorRequest {
-    int timeoutMs;
-    void (*callback)();
-    uint32_t generation;
-};
-
-static volatile uint32_t scanGeneration = 0;
+static StaticTimer_t scanMonitorTimerStorage;
+static TimerHandle_t scanMonitorTimer = nullptr;
+static std::atomic<bool> scanCompletionPending{false};
+using ScanCompleteCallback = void (*)();
+static std::atomic<ScanCompleteCallback> scanCompleteCallback{nullptr};
 
 class PeripheralCallbacks final : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer *, NimBLEConnInfo &connection) override {
@@ -247,51 +248,52 @@ void connectToDiscoveredDevice(int index) {
 bool startScanWithTimeout(int timeoutMs, void (*onComplete)()) {
     clearDiscoveredDevices();
     NimBLEScan *pScan = NimBLEDevice::getScan();
-    const uint32_t generation = ++scanGeneration;
+
+    if (scanMonitorTimer == nullptr) {
+        scanMonitorTimer = xTimerCreateStatic(
+            "scanMonitor", pdMS_TO_TICKS(1000), pdFALSE, nullptr,
+            [](TimerHandle_t) {
+                scanCompletionPending.store(true, std::memory_order_release);
+            },
+            &scanMonitorTimerStorage);
+    }
+    if (scanMonitorTimer == nullptr) {
+        ESP_LOGE(TAG_COMS, "Could not create BLE scan timer");
+        return false;
+    }
+
+    xTimerStop(scanMonitorTimer, pdMS_TO_TICKS(100));
+    scanCompletionPending.store(false, std::memory_order_release);
+    scanCompleteCallback.store(onComplete, std::memory_order_release);
+
     if (pScan->isScanning()) pScan->stop();
     if (!pScan->start(0)) {
         ESP_LOGE(TAG_COMS, "Could not start BLE scan");
         return false;
     }
 
-    // Start a task to monitor scanning and call callback
-    // NOTE: Stack size must be large enough to handle the callback chain,
-    // which includes state machine processing and UI operations
-    auto *request = new ScanMonitorRequest{timeoutMs, onComplete, generation};
-    if (xTaskCreate(
-        [](void *param) {
-            auto *request = static_cast<ScanMonitorRequest *>(param);
-
-            // Wait for scan timeout
-            vTaskDelay(pdMS_TO_TICKS(request->timeoutMs));
-
-            // A newer request owns the scanner and its completion callback.
-            if (request->generation != scanGeneration) {
-                delete request;
-                vTaskDelete(NULL);
-                return;
-            }
-
-            // Stop scanning
-            NimBLEScan *pScan = NimBLEDevice::getScan();
-            if (pScan->isScanning()) {
-                pScan->stop();
-            }
-
-            // Call completion callback
-            if (request->callback) {
-                request->callback();
-            }
-
-            delete request;
-            vTaskDelete(NULL);
-        },
-        "scanMonitor", 8192, request, 1, NULL) != pdPASS) {
-        delete request;
-        ++scanGeneration;
+    if (xTimerChangePeriod(scanMonitorTimer, pdMS_TO_TICKS(timeoutMs),
+                           pdMS_TO_TICKS(100)) != pdPASS) {
         pScan->stop();
-        ESP_LOGE(TAG_COMS, "Could not create BLE scan monitor task");
+        ESP_LOGE(TAG_COMS, "Could not start BLE scan timer");
         return false;
     }
     return true;
+}
+
+void processScanMonitor() {
+    if (!scanCompletionPending.exchange(false, std::memory_order_acq_rel)) {
+        return;
+    }
+
+    NimBLEScan *pScan = NimBLEDevice::getScan();
+    if (pScan->isScanning()) {
+        pScan->stop();
+    }
+
+    const ScanCompleteCallback callback =
+        scanCompleteCallback.load(std::memory_order_acquire);
+    if (callback) {
+        callback();
+    }
 }

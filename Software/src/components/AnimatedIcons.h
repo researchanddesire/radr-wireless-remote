@@ -270,6 +270,7 @@ class BLEStateIcon : public StateIcon {
 static WifiStateIcon *globalWifiIcon = nullptr;
 static BatteryStateIcon *globalBatteryIcon = nullptr;
 static BLEStateIcon *globalBleIcon = nullptr;
+static unsigned long lastStatusIconUpdate = 0;
 
 // Function to force all status icons to redraw and recheck status
 static void forceStatusIconsRedraw() {
@@ -291,38 +292,33 @@ static void forceStatusIconsRedraw() {
     }
 }
 
-// Example usage:
 static void setupAnimatedIcons() {
-    auto task = [](void *pvParameters) {
-        BLEStateIcon bleIcon(getIconX(), 3);
-        WifiStateIcon wifiIcon(getIconX(), 3);
-        BatteryStateIcon batteryIcon(getIconX(), 3);
+    static BLEStateIcon bleIcon(getIconX(), 3);
+    static WifiStateIcon wifiIcon(getIconX(), 3);
+    static BatteryStateIcon batteryIcon(getIconX(), 3);
 
-        // Set global pointers for external access
-        globalBleIcon = &bleIcon;
-        globalWifiIcon = &wifiIcon;
-        globalBatteryIcon = &batteryIcon;
+    globalBleIcon = &bleIcon;
+    globalWifiIcon = &wifiIcon;
+    globalBatteryIcon = &batteryIcon;
+}
 
-        while (true) {
-            // If we're sleeping, don't draw anything in the status bar.
-            if (idleState != IdleState::NOT_IDLE) {
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
-                continue;
-            }
+static void processAnimatedIcons() {
+    const unsigned long now = millis();
+    const unsigned long interval =
+        idleState == IdleState::NOT_IDLE ? 250 : 1000;
+    if (now - lastStatusIconUpdate < interval) {
+        return;
+    }
+    lastStatusIconUpdate = now;
 
-            // Draw icons - they will only redraw if state actually changed
-            wifiIcon.draw(&tft);
-            batteryIcon.draw(&tft);
-            bleIcon.draw(&tft);
+    if (idleState != IdleState::NOT_IDLE || globalWifiIcon == nullptr ||
+        globalBatteryIcon == nullptr || globalBleIcon == nullptr) {
+        return;
+    }
 
-            // Reduced frequency - check for updates every 250ms instead of
-            // 100ms
-            vTaskDelay(250 / portTICK_PERIOD_MS);
-        }
-    };
-
-    xTaskCreatePinnedToCore(task, "draw_icons", 4 * configMINIMAL_STACK_SIZE,
-                            nullptr, tskIDLE_PRIORITY, nullptr, 0);
+    globalWifiIcon->draw(&tft);
+    globalBatteryIcon->draw(&tft);
+    globalBleIcon->draw(&tft);
 }
 
 #endif  // LOCKBOX_ANIMATEDICONS_H

@@ -46,35 +46,34 @@ inline void setNotIdle(String src)
 
 inline void setupIdleMonitor() {
     lastInteraction = millis();
-    
-    auto task = [](void *pvParameters) {
-        while (true) {
-            unsigned long elapsed = millis() - lastInteraction;
-            
-            // Only act on state TRANSITIONS, not every loop
-            if (elapsed > SLEEP_TIMEOUT && idleState != IdleState::SLEEP) {
-                idleState = IdleState::SLEEP;
-                turnOffScreen();
-                sleepDuration = elapsed;
-                ESP_LOGI("IDLE", "Entering SLEEP state");
-                // Could trigger deep sleep here in the future
-            }
-            else if (elapsed > PSEUDO_SLEEP_TIMEOUT && idleState == IdleState::IDLE) {
-                idleState = IdleState::PSEUDO_SLEEP;
-                ESP_LOGI("IDLE", "Entering PSEUDO_SLEEP state");
-            }
-            else if (elapsed > IDLE_TIMEOUT && idleState == IdleState::NOT_IDLE) {
-                idleState = IdleState::IDLE;
-                dimScreen();
-                ESP_LOGI("IDLE", "Entering IDLE state - dimming screen");
-            }
-            
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
-        }
-    };
+}
 
-    xTaskCreatePinnedToCore(task, "idle_monitor", 4 * configMINIMAL_STACK_SIZE,
-                            nullptr, tskIDLE_PRIORITY, nullptr, 0);
+inline void processIdleMonitor() {
+    static unsigned long lastCheck = 0;
+    const unsigned long now = millis();
+    if (now - lastCheck < 1000) {
+        return;
+    }
+    lastCheck = now;
+
+    const unsigned long elapsed = now - lastInteraction;
+
+    // Only act on state transitions, not every loop.
+    if (elapsed > SLEEP_TIMEOUT && idleState != IdleState::SLEEP) {
+        idleState = IdleState::SLEEP;
+        turnOffScreen();
+        sleepDuration = elapsed;
+        ESP_LOGI("IDLE", "Entering SLEEP state");
+    } else if (elapsed > PSEUDO_SLEEP_TIMEOUT &&
+               idleState == IdleState::IDLE) {
+        idleState = IdleState::PSEUDO_SLEEP;
+        ESP_LOGI("IDLE", "Entering PSEUDO_SLEEP state");
+    } else if (elapsed > IDLE_TIMEOUT &&
+               idleState == IdleState::NOT_IDLE) {
+        idleState = IdleState::IDLE;
+        dimScreen();
+        ESP_LOGI("IDLE", "Entering IDLE state - dimming screen");
+    }
 }
 
 #endif // LOCKBOX_LASTINTERACTION_H

@@ -29,6 +29,8 @@ use std::{
 use tokio::sync::{broadcast, mpsc as tokio_mpsc, oneshot};
 use uuid::Uuid;
 
+use crate::rad_ble::{RadBleControlEvent, SharedRadBleState};
+
 const SCAN_SLICE_MS: i32 = 500;
 const BLE_WORKER_STACK_BYTES: usize = 16 * 1024;
 
@@ -166,7 +168,9 @@ struct BleWorkerContext {
     available: Arc<AtomicBool>,
     device_configuration: Arc<DeviceConfigurationManager>,
     implemented_protocols: Arc<HashSet<String>>,
-    candidate_sender: tokio_mpsc::Sender<Esp32BleCandidate>,
+    candidate_sender: tokio_mpsc::UnboundedSender<Esp32BleCandidate>,
+    rad_ble_controls: tokio_mpsc::Sender<RadBleControlEvent>,
+    rad_ble_state: SharedRadBleState,
 }
 
 impl BleWorkerHandle {
@@ -182,7 +186,9 @@ impl BleWorkerHandle {
 pub struct Esp32BleCommunicationManagerBuilder {
     device_configuration: Arc<DeviceConfigurationManager>,
     implemented_protocols: Arc<HashSet<String>>,
-    candidate_sender: tokio_mpsc::Sender<Esp32BleCandidate>,
+    candidate_sender: tokio_mpsc::UnboundedSender<Esp32BleCandidate>,
+    rad_ble_controls: tokio_mpsc::Sender<RadBleControlEvent>,
+    rad_ble_state: SharedRadBleState,
     commands: Sender<BleWorkerCommand>,
     command_receiver: Option<Receiver<BleWorkerCommand>>,
 }
@@ -191,7 +197,9 @@ impl Esp32BleCommunicationManagerBuilder {
     pub fn new(
         device_configuration: Arc<DeviceConfigurationManager>,
         implemented_protocols: Arc<HashSet<String>>,
-        candidate_sender: tokio_mpsc::Sender<Esp32BleCandidate>,
+        candidate_sender: tokio_mpsc::UnboundedSender<Esp32BleCandidate>,
+        rad_ble_controls: tokio_mpsc::Sender<RadBleControlEvent>,
+        rad_ble_state: SharedRadBleState,
     ) -> (Self, Esp32BleCandidateApprover) {
         let (commands, command_receiver) = mpsc::channel();
         let approver = Esp32BleCandidateApprover {
@@ -202,6 +210,8 @@ impl Esp32BleCommunicationManagerBuilder {
                 device_configuration,
                 implemented_protocols,
                 candidate_sender,
+                rad_ble_controls,
+                rad_ble_state,
                 commands,
                 command_receiver: Some(command_receiver),
             },
@@ -228,6 +238,8 @@ impl HardwareCommunicationManagerBuilder for Esp32BleCommunicationManagerBuilder
         let device_configuration = self.device_configuration.clone();
         let implemented_protocols = self.implemented_protocols.clone();
         let candidate_sender = self.candidate_sender.clone();
+        let rad_ble_controls = self.rad_ble_controls.clone();
+        let rad_ble_state = self.rad_ble_state.clone();
         let thread_result = std::thread::Builder::new()
             .name("radr-ble".to_owned())
             .stack_size(BLE_WORKER_STACK_BYTES)
@@ -242,6 +254,8 @@ impl HardwareCommunicationManagerBuilder for Esp32BleCommunicationManagerBuilder
                         device_configuration,
                         implemented_protocols,
                         candidate_sender,
+                        rad_ble_controls,
+                        rad_ble_state,
                     },
                 );
             });
@@ -577,10 +591,15 @@ fn run_ble_worker(commands: Receiver<BleWorkerCommand>, context: BleWorkerContex
         device_configuration,
         implemented_protocols,
         candidate_sender,
+        rad_ble_controls,
+        rad_ble_state,
     } = context;
     let ble_device = BLEDevice::take();
     if let Err(error) = ble_device.set_preferred_mtu(512) {
         log::warn!("Could not set preferred BLE MTU: {error:?}");
+    }
+    if let Err(error) = crate::rad_ble::install(ble_device, rad_ble_controls, rad_ble_state) {
+        log::error!("Could not initialize Rust RAD BLE v1: {error}");
     }
     available.store(true, Ordering::Release);
     log::info!("RADR ESP32 BLE worker ready");
@@ -599,6 +618,7 @@ fn run_ble_worker(commands: Receiver<BleWorkerCommand>, context: BleWorkerContex
             match commands.try_recv() {
                 Ok(command) => {
                     if matches!(&command, BleWorkerCommand::StartScanning) {
+                        seen.clear();
                         candidate_snapshots.clear();
                         pending_candidates.clear();
                         reported_addresses.clear();
@@ -754,10 +774,16 @@ fn run_ble_worker(commands: Receiver<BleWorkerCommand>, context: BleWorkerContex
 
                 pending_candidates.insert(address_string.clone(), advertisement);
                 if candidate_snapshots.get(&address_string) != Some(&candidate) {
-                    if candidate_sender.try_send(candidate.clone()).is_err() {
-                        log::warn!("Could not enqueue a supported ESP32 BLE candidate for RADR");
+                    match candidate_sender.send(candidate.clone()) {
+                        Ok(()) => {
+                            candidate_snapshots.insert(address_string, candidate);
+                        }
+                        Err(_) => {
+                            log::warn!(
+                                "Could not enqueue a supported ESP32 BLE candidate because the RADR receiver closed"
+                            );
+                        }
                     }
-                    candidate_snapshots.insert(address_string, candidate);
                 }
                 None
             })

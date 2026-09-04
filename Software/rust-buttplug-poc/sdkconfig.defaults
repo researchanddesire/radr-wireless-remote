@@ -26,3 +26,9 @@ CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=7000
 
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_DEFAULT_LEVEL=3
+
+# Full 320x240 ST7789 refreshes can monopolize CPU0 long enough to trip the
+# default idle-task watchdog window. Preserve watchdog coverage on CPU1 and
+# give deliberate display transfers enough time to complete.
+# CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0 is not set
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30

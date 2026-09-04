@@ -23,16 +23,23 @@ panic = "abort"
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
+base64 = "0.22"
 buttplug_client = { git = "https://github.com/buttplugio/buttplug", rev = "9571b3db42ee2d7b3342ab9d40eb5c9e45679444", default-features = false, features = ["tokio-runtime"] }
 buttplug_client_in_process = { git = "https://github.com/buttplugio/buttplug", rev = "9571b3db42ee2d7b3342ab9d40eb5c9e45679444", default-features = false, features = ["tokio-runtime"] }
 buttplug_core = { git = "https://github.com/buttplugio/buttplug", rev = "9571b3db42ee2d7b3342ab9d40eb5c9e45679444", default-features = false, features = ["tokio-runtime"] }
 buttplug_server = { git = "https://github.com/buttplugio/buttplug", rev = "9571b3db42ee2d7b3342ab9d40eb5c9e45679444", default-features = false, features = ["tokio-runtime"] }
 buttplug_server_device_config = { git = "https://github.com/buttplugio/buttplug", rev = "9571b3db42ee2d7b3342ab9d40eb5c9e45679444" }
+display-interface-spi = "0.4.1"
+embedded-graphics = "0.7.1"
+embedded-hal = "1.0"
 esp32-nimble = "0.12.0"
 esp-idf-svc = { version = "0.52.1", features = ["critical-section"] }
 futures = "0.3"
 log = "0.4"
+mipidsi = "0.5.0"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+strum = "0.28"
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "sync", "time"] }
 uuid = "1"
 

@@ -1,9 +1,9 @@
-# RADR upstream Buttplug Rust probe
+# RADR upstream Buttplug Rust firmware
 
 ## Result
 
 The official Buttplug Rust implementation can run directly on the RADR's
-ESP32-S3. This probe boots a Rust/ESP-IDF firmware, loads Buttplug's complete
+ESP32-S3. This target boots a Rust/ESP-IDF firmware, loads Buttplug's complete
 embedded device configuration, runs the official server and protocol code in
 process, and supplies an ESP32 NimBLE implementation of Buttplug's generic
 Bluetooth LE hardware interfaces.
@@ -16,9 +16,11 @@ than a second program that the existing Arduino firmware can launch. The ESP32
 has no process loader or desktop operating system, so a sidecar ELF is not a
 useful deployment model.
 
-The probe is intentionally separate from the production Arduino target. It does
-not yet include the RADR display, controls, updater, or motor-control
-application, and it never drives the RADR motor output.
+The firmware is intentionally separate from the production Arduino target. It
+now owns the RADR display, three under-screen buttons, and both rotary encoders.
+It also exposes those controls and a lossless copy of the complete framebuffer
+over RAD BLE for Motion Lab automation. It does not include the production
+updater or the unrelated Arduino device-control implementations.
 
 ## What is upstream and what is local
 
@@ -65,23 +67,41 @@ ESP-IDF, its host-parallelism-based default can select an invalid shard count.
 The target-specific patch selects two shards while preserving DashMap's normal
 behavior elsewhere. The official Buttplug source is unmodified.
 
-## RADR flow represented by the probe
+## RADR flow
 
-1. Scan for BLE advertisements.
+1. Run one unrestricted active BLE scan. Every advertisement is matched against
+   all 132 factory-backed BLE protocol IDs in the loaded upstream catalog; RADR
+   never chooses a protocol before discovery.
 2. Use upstream configuration to discard unsupported advertisements and report
-   candidate protocol names for supported devices.
-3. List candidates in the serial log. The left and right under-screen buttons
-   change the selected candidate; the center button explicitly approves it.
+   every matching device, including all candidate protocol names when an
+   advertisement is ambiguous. Candidate delivery to the UI is lossless rather
+   than capped to a single device or protocol.
+3. Show every candidate on the RADR display and in structured RAD BLE state.
+   The left/right under-screen buttons or either encoder change the selected
+   candidate; the center button explicitly approves it.
 4. Only then let the official Buttplug server connect, identify the precise
    device, and initialize its protocol.
-5. Enumerate the upstream device features and their allowed ranges.
-6. Send an upstream-generated all-stop command as the only automatic command.
+5. Enumerate the upstream device features and allowed ranges. Every modifiable
+   output is presented as a horizontal 0–100% control bar without maintaining a
+   second device/settings schema.
+6. In the connected screen, use the right encoder or left/right buttons to
+   select a setting, the left encoder to change its value, and the center button
+   to send the official upstream all-stop command and zero every bar.
+7. Send an upstream-generated all-stop immediately after connection so a newly
+   identified device always begins in a safe state.
 
 Each enumerated feature is also emitted on serial as a compact
 `BUTTPLUG_FEATURE_JSON` object. Its `definition` is the official v4
 `DeviceFeature` wire representation, including modifiable output types and
 ranges plus readable or subscribable input capabilities. RADR does not maintain
 a second settings schema.
+
+Motion Lab can drive the exact same state machine through the RAD BLE `button`
+and `encoder` characteristics. Its `state.read` response includes candidates,
+the accepted device, every enumerated output control, the selected control, and
+its current percentage. The `display.framebuffer` resource transfers a verified
+320×240 RGB565 framebuffer, so automated tests can inspect the complete screen
+without a camera.
 
 For the physically verified XHT profile, the upstream feature serializes as:
 
@@ -96,38 +116,48 @@ specialization rejected it, but the observation demonstrates why a match must
 be presented to the user instead of being treated as permission to connect.
 Buttplug's address allow/deny entries can provide an additional persistent
 policy. A production RADR screen can consume the same candidate channel used
-by this serial/button probe without changing the transport or protocols.
+by this firmware without changing the transport or protocols.
 
 ## Physical verification
 
-This was built and flashed to a RADR ESP32-S3 with 16 MB flash and 8 MB octal
-PSRAM. A CoreBluetooth test peripheral advertised the real upstream `XHT`
-profile (`mizzzee-v2`, service `0xEEA0`, writable characteristic `0xEE01`). The
-RADR then:
+The release firmware was built and flashed to a RADR ESP32-S3 with 16 MB flash
+and 8 MB octal PSRAM. The application occupies 4,970,000 of 6,553,600 bytes in
+one OTA slot (75.84%). The panel uses `LandscapeInverted(true)`, retaining the
+requested horizontal mirror and applying the subsequent 180-degree rotation.
 
-- matched `mizzzee-v2` from the upstream catalog
-- connected and completed GATT specialization
-- added `Mizz Zee Device` through the official server
-- exposed feature 0 as `Vibrate` with 69 discrete levels (`0..=68`)
-- sent all-stop successfully
-- wrote the exact upstream-encoded packet `69 96 04 02 00 2c 00`
+Motion Lab generated 119 BLE emulator profiles from all 120 active tests in the
+unchanged upstream fixture suite at revision
+`9571b3db42ee2d7b3342ab9d40eb5c9e45679444`; the sole excluded fixture is
+non-BLE TCode. A Rust fixture-radio image was flashed to a Lockbox ESP32-S3 and
+the complete catalog was exercised against the physical RADR. The final report
+records:
 
-Those physical results cover the base probe through commit `32806a9`. Later
-factory filtering, structured settings output, read/notification profiles, and
-transport lifecycle hardening are release-build verified but await a fresh
-hardware run.
+- 119 of 119 fixture profiles passed across 82 unique upstream protocols
+- 192 of 192 enumerated settings were selected independently, changed through
+  RADR's encoder path, and observed as physical GATT writes
+- every setting returned to zero after the center-button all-stop
+- all initialization transcripts completed, and every profile with an upstream
+  stop assertion emitted a physical stop write
+- 108 fresh-connection stops matched the fixture's exact canonical bytes; three
+  stateful fixtures used different prior-output or sequence-counter state, so
+  validation required the physical initial stop, every control write, the
+  physical final stop, and zeroed RADR state instead of assuming static bytes
 
-The current release application occupies 4,841,968 of 6,553,600 bytes in one
-OTA slot (73.88%). On the physically tested predecessor image, after approved
-connection and command transmission, the measured free heaps were 139,820
-bytes internal and 6,303,852 bytes external. The main task retained 45,668
-bytes of stack headroom; the BLE worker retained 12,952 bytes.
+The report is
+`/tmp/radr-buttplug-emulator-matrix-full-rust-all-controls-v9.json`, SHA-256
+`e8afb9d154ab620b5574aab351b8cc807daa45c633a4224323d7074d8837e3cf`.
+The active upstream fixture suite covers 82 of the 132 factory-backed BLE
+protocol IDs. The other 50 remain discoverable from the official configuration
+and factory map, but upstream does not currently provide active fixture
+transcripts for them; this project does not invent replacement protocol logic.
 
-The nearby device advertising as `S57 D17E LE` was observed by the ESP32, but
-Buttplug schema 5.30 has no matching name, service `0xFE07`, or manufacturer
-identifier 1447. The probe correctly filters it as unsupported. This is a
-catalog limitation, not a transport failure; it would need an upstream device
-configuration/protocol contribution or a local user configuration.
+One unrestricted scan also discovered two emulators concurrently and retained
+both candidates: `F1s` (`lelo-f1s`) and `SS-TD-YDTD-001` (`activejoy`). RADR
+displayed both, accepted an explicit selection of `F1s`, let the official server
+identify `Lelo F1s`, and rendered both upstream-derived controls. Setting both
+bars to 25% produced the packets `[1, 25, 0]` and `[1, 25, 25]`; all-stop
+produced `[1, 0, 0]`. Motion Lab downloaded and verified the complete 320×240
+RGB565 framebuffer without a camera.
 
 ## Embedded constraints discovered
 
@@ -135,7 +165,7 @@ configuration/protocol contribution or a local user configuration.
   A capability-aware global allocator keeps that data in PSRAM and preserves
   internal RAM for NimBLE, FreeRTOS, and DMA-capable peripherals.
 - The main task needs a large stack while Buttplug compiles its embedded JSON
-  configuration and schemas. The probe reserves 96 KiB.
+  configuration and schemas. The firmware reserves 96 KiB.
 - Fat LTO deterministically miscompiled an aggregate returned while creating a
   connected upstream device with the tested Xtensa toolchain. Release LTO is
   disabled; size optimization remains enabled.
@@ -196,7 +226,8 @@ serial port explicitly:
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"
-espflash flash --monitor --port /dev/cu.usbserial-0001 \
+espflash flash --monitor --partition-table partitions.csv \
+  --port /dev/cu.usbserial-0001 \
   target/xtensa-esp32s3-espidf/release/radr-buttplug-poc
 ```
 
@@ -226,7 +257,7 @@ The builder rejects a bundle unless both images identify as ESP32-S3 DIO/80 MHz
 16 MB images, the binary partition table exactly matches `partitions.csv`, the
 application fits in `app0`, and the application bytes in both artifacts are
 identical. It also requires blank NVS and OTA-selection sectors. The current
-factory image is 4,907,504 bytes; it packages the 4,841,968-byte application
+factory image is 5,035,536 bytes; it packages the 4,970,000-byte application
 without padding the unused remainder of flash.
 
 The factory image can be installed directly at offset zero. This replaces the
@@ -239,7 +270,7 @@ espflash write-bin --chip esp32s3 --port /dev/cu.usbserial-0001 \
 ```
 
 For browser installation, host the complete `dist/` directory on one HTTPS
-origin and open `install.html`. Pull requests that touch this probe independently
+origin and open `install.html`. Pull requests that touch this target independently
 rebuild, validate, checksum, and upload the same directory as the
 `radr-buttplug-install-bundle` CI artifact.
 

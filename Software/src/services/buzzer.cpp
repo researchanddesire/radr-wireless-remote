@@ -1,4 +1,5 @@
 #include "buzzer.h"
+#include "utils/psramTask.h"
 
 #include <unordered_map>
 #include <vector>
@@ -58,7 +59,7 @@ void buzzerTask(void *parameter) {
             currentPattern = BuzzerPattern::NONE;
     }
 
-    vTaskDelete(NULL);
+    exitPsramTask();
 }
 
 void initBuzzer() {
@@ -66,7 +67,7 @@ void initBuzzer() {
     digitalWrite(pins::BUZZER_PIN, LOW);
     playBuzzerPattern(BuzzerPattern::BOOT);
 
-    xTaskCreatePinnedToCore(buzzerTask,                    // Task function
+    createPsramTask(buzzerTask,                    // Task function
                             "BuzzerTask",                  // Task name
                             3 * configMINIMAL_STACK_SIZE,  // Stack size
                             nullptr,                       // Parameter

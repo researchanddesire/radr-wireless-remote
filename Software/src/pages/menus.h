@@ -20,6 +20,7 @@ extern int tabBarHeight;   // 0 when no tabs, ~28 when tabs shown
 extern TaskHandle_t menuTaskHandle;
 
 void drawMenu();
+void stopMenuTask();
 void drawMenuWithTabs();
 void drawTabBar();
 void drawDeviceListMenu();

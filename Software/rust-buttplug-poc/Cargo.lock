@@ -2102,6 +2102,7 @@ dependencies = [
  "esp32-nimble",
  "futures",
  "log",
+ "serde_json",
  "tokio",
  "uuid",
 ]

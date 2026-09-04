@@ -205,6 +205,12 @@ fn main() -> anyhow::Result<()> {
                                 device.name(),
                                 feature.feature()
                             );
+                            let feature_json = serde_json::json!({
+                                "device": device.name(),
+                                "feature_index": index,
+                                "definition": feature.feature(),
+                            });
+                            log::info!("BUTTPLUG_FEATURE_JSON {feature_json}");
                         }
                         match device.stop().await {
                             Ok(()) => log::info!(

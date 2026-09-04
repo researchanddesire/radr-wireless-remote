@@ -32,6 +32,7 @@ esp32-nimble = "0.12.0"
 esp-idf-svc = { version = "0.52.1", features = ["critical-section"] }
 futures = "0.3"
 log = "0.4"
+serde_json = "1.0"
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "sync", "time"] }
 uuid = "1"
 

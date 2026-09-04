@@ -75,6 +75,18 @@ behavior elsewhere. The official Buttplug source is unmodified.
 5. Enumerate the upstream device features and their allowed ranges.
 6. Send an upstream-generated all-stop command as the only automatic command.
 
+Each enumerated feature is also emitted on serial as a compact
+`BUTTPLUG_FEATURE_JSON` object. Its `definition` is the official v4
+`DeviceFeature` wire representation, including modifiable output types and
+ranges plus readable or subscribable input capabilities. RADR does not maintain
+a second settings schema.
+
+For the physically verified XHT profile, the upstream feature serializes as:
+
+```json
+{"definition":{"FeatureDescription":"","FeatureIndex":0,"Output":{"Vibrate":{"Value":[0,68]}}},"device":"Mizz Zee Device","feature_index":0}
+```
+
 The approval gate is intentionally outside the stock server. A nearby
 `NBScooter0282` was classified as a possible `lovense` device because it shared
 the broad Nordic UART advertisement used by that upstream matcher. GATT
@@ -98,12 +110,13 @@ RADR then:
 - sent all-stop successfully
 - wrote the exact upstream-encoded packet `69 96 04 02 00 2c 00`
 
-Those physical results cover the base probe through commit `32806a9`. The
-factory filtering, receive-path instrumentation, and transport lifecycle
-hardening in `dac57c4` are release-build verified but await a fresh hardware run.
+Those physical results cover the base probe through commit `32806a9`. Later
+factory filtering, structured settings output, read/notification profiles, and
+transport lifecycle hardening are release-build verified but await a fresh
+hardware run.
 
-The current release application occupies 4,836,416 of 6,553,600 bytes in one
-OTA slot (73.80%). On the physically tested predecessor image, after approved
+The current release application occupies 4,841,968 of 6,553,600 bytes in one
+OTA slot (73.88%). On the physically tested predecessor image, after approved
 connection and command transmission, the measured free heaps were 139,820
 bytes internal and 6,303,852 bytes external. The main task retained 45,668
 bytes of stack headroom; the BLE worker retained 12,952 bytes.
@@ -141,10 +154,11 @@ configuration/protocol contribution or a local user configuration.
 ## Updating upstream support
 
 To adopt a newer Buttplug catalog and protocol set, update all five Git
-revisions in `Cargo.toml` together, regenerate `Cargo.lock`, then rebuild and
-rerun the BLE hardware test. This is a firmware update, not a runtime package
-download. Device behavior still arrives from upstream without adding one-off
-protocol implementations to RADR.
+revisions in `Cargo.toml` and `UPSTREAM_BUTTPLUG_REVISION` in `src/main.rs`
+together, regenerate `Cargo.lock`, then rebuild and rerun the BLE hardware test.
+This is a firmware update, not a runtime package download. Device behavior
+still arrives from upstream without adding one-off protocol implementations to
+RADR.
 
 For production, the lowest-risk architecture is to evolve this into the RADR
 application firmware and port the existing UI, update, storage, and actuator
@@ -222,3 +236,17 @@ RADR_BUTTPLUG_AUTO_APPROVE_NAME=XHT cargo build --release --locked
 ```
 
 Use `Janna` instead of `XHT` when running the VibCrafter receive-path profile.
+
+The `hismith` profile exercises a direct GATT read used by an official protocol
+identifier:
+
+```sh
+/tmp/radr-buttplug-ble-mock hismith
+```
+
+It advertises `HISMITH`, exposes the configured `FFE5` write service and `FF90`
+model service, and returns `10 01` from characteristic `FF96`. The unchanged
+upstream identifier converts that response to `1001`, selects `Hismith Sex
+Machine`, and exposes its `Oscillate` range. Its upstream-generated all-stop
+packet is `aa 04 00 04`. Use `HISMITH` as the test-only auto-approval name for
+an unattended run.

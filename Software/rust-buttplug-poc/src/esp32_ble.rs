@@ -124,6 +124,7 @@ struct ConnectedDevice {
     address: String,
     events: broadcast::Sender<HardwareEvent>,
     endpoints: HashMap<Endpoint, BLERemoteCharacteristic>,
+    subscribed_endpoints: HashSet<Endpoint>,
     disconnected_since: Option<Instant>,
 }
 
@@ -158,6 +159,16 @@ struct BleWorkerHandle {
     available: Arc<AtomicBool>,
 }
 
+struct BleWorkerContext {
+    command_sender: Sender<BleWorkerCommand>,
+    event_sender: tokio_mpsc::Sender<HardwareCommunicationManagerEvent>,
+    scanning: Arc<AtomicBool>,
+    available: Arc<AtomicBool>,
+    device_configuration: Arc<DeviceConfigurationManager>,
+    implemented_protocols: Arc<HashSet<String>>,
+    candidate_sender: tokio_mpsc::Sender<Esp32BleCandidate>,
+}
+
 impl BleWorkerHandle {
     fn send(&self, command: BleWorkerCommand) -> Result<(), ButtplugDeviceError> {
         self.commands.send(command).map_err(|_| {
@@ -170,6 +181,7 @@ impl BleWorkerHandle {
 
 pub struct Esp32BleCommunicationManagerBuilder {
     device_configuration: Arc<DeviceConfigurationManager>,
+    implemented_protocols: Arc<HashSet<String>>,
     candidate_sender: tokio_mpsc::Sender<Esp32BleCandidate>,
     commands: Sender<BleWorkerCommand>,
     command_receiver: Option<Receiver<BleWorkerCommand>>,
@@ -178,6 +190,7 @@ pub struct Esp32BleCommunicationManagerBuilder {
 impl Esp32BleCommunicationManagerBuilder {
     pub fn new(
         device_configuration: Arc<DeviceConfigurationManager>,
+        implemented_protocols: Arc<HashSet<String>>,
         candidate_sender: tokio_mpsc::Sender<Esp32BleCandidate>,
     ) -> (Self, Esp32BleCandidateApprover) {
         let (commands, command_receiver) = mpsc::channel();
@@ -187,6 +200,7 @@ impl Esp32BleCommunicationManagerBuilder {
         (
             Self {
                 device_configuration,
+                implemented_protocols,
                 candidate_sender,
                 commands,
                 command_receiver: Some(command_receiver),
@@ -212,6 +226,7 @@ impl HardwareCommunicationManagerBuilder for Esp32BleCommunicationManagerBuilder
         let available_for_worker = available.clone();
         let command_sender_for_worker = command_sender.clone();
         let device_configuration = self.device_configuration.clone();
+        let implemented_protocols = self.implemented_protocols.clone();
         let candidate_sender = self.candidate_sender.clone();
         let thread_result = std::thread::Builder::new()
             .name("radr-ble".to_owned())
@@ -219,12 +234,15 @@ impl HardwareCommunicationManagerBuilder for Esp32BleCommunicationManagerBuilder
             .spawn(move || {
                 run_ble_worker(
                     command_receiver,
-                    command_sender_for_worker,
-                    event_sender,
-                    scanning_for_worker,
-                    available_for_worker,
-                    device_configuration,
-                    candidate_sender,
+                    BleWorkerContext {
+                        command_sender: command_sender_for_worker,
+                        event_sender,
+                        scanning: scanning_for_worker,
+                        available: available_for_worker,
+                        device_configuration,
+                        implemented_protocols,
+                        candidate_sender,
+                    },
                 );
             });
 
@@ -320,7 +338,7 @@ impl HardwareConnector for Esp32BleConnector {
         let session_id = receive_worker_reply(reply_receiver, "connect").await?;
         Ok(Box::new(Esp32BleSpecializer {
             worker: self.worker.clone(),
-            session_id,
+            session_id: Some(session_id),
             name: self.advertisement.name.clone(),
             address: self.advertisement.address_string.clone(),
             events: event_sender,
@@ -330,10 +348,18 @@ impl HardwareConnector for Esp32BleConnector {
 
 struct Esp32BleSpecializer {
     worker: BleWorkerHandle,
-    session_id: u32,
+    session_id: Option<u32>,
     name: String,
     address: String,
     events: broadcast::Sender<HardwareEvent>,
+}
+
+impl Drop for Esp32BleSpecializer {
+    fn drop(&mut self) {
+        if let Some(session_id) = self.session_id.take() {
+            queue_disconnect(&self.worker, session_id);
+        }
+    }
 }
 
 #[async_trait]
@@ -342,6 +368,11 @@ impl HardwareSpecializer for Esp32BleSpecializer {
         &mut self,
         specifiers: &[ProtocolCommunicationSpecifier],
     ) -> Result<Hardware, ButtplugDeviceError> {
+        let session_id = self.session_id.ok_or_else(|| {
+            ButtplugDeviceError::DeviceConnectionError(
+                "RADR ESP32 BLE session has already been specialized".to_owned(),
+            )
+        })?;
         let bluetooth = specifiers
             .iter()
             .find_map(|specifier| match specifier {
@@ -370,11 +401,12 @@ impl HardwareSpecializer for Esp32BleSpecializer {
 
         let (reply_sender, reply_receiver) = oneshot::channel();
         self.worker.send(BleWorkerCommand::Specialize {
-            session_id: self.session_id,
+            session_id,
             services,
             reply: reply_sender,
         })?;
         let endpoints = receive_worker_reply(reply_receiver, "specialize").await?;
+        self.session_id = None;
 
         Ok(Hardware::new(
             &self.name,
@@ -384,8 +416,9 @@ impl HardwareSpecializer for Esp32BleSpecializer {
             false,
             Box::new(Esp32BleHardware {
                 worker: self.worker.clone(),
-                session_id: self.session_id,
+                session_id,
                 events: self.events.clone(),
+                disconnect_requested: AtomicBool::new(false),
             }),
         ))
     }
@@ -395,10 +428,22 @@ struct Esp32BleHardware {
     worker: BleWorkerHandle,
     session_id: u32,
     events: broadcast::Sender<HardwareEvent>,
+    disconnect_requested: AtomicBool,
+}
+
+impl Drop for Esp32BleHardware {
+    fn drop(&mut self) {
+        if !self.disconnect_requested.swap(true, Ordering::AcqRel) {
+            queue_disconnect(&self.worker, self.session_id);
+        }
+    }
 }
 
 impl HardwareInternal for Esp32BleHardware {
     fn disconnect(&self) -> BoxFuture<'static, Result<(), ButtplugDeviceError>> {
+        if self.disconnect_requested.swap(true, Ordering::AcqRel) {
+            return future::ready(Ok(())).boxed();
+        }
         let worker = self.worker.clone();
         let session_id = self.session_id;
         async move {
@@ -498,6 +543,13 @@ impl HardwareInternal for Esp32BleHardware {
     }
 }
 
+fn queue_disconnect(worker: &BleWorkerHandle, session_id: u32) {
+    let (reply, _) = oneshot::channel();
+    if let Err(error) = worker.send(BleWorkerCommand::Disconnect { session_id, reply }) {
+        log::warn!("Could not queue RADR ESP32 BLE disconnect: {error}");
+    }
+}
+
 async fn receive_worker_reply<T>(
     receiver: oneshot::Receiver<Result<T, String>>,
     operation: &str,
@@ -516,15 +568,16 @@ async fn receive_worker_reply<T>(
         })
 }
 
-fn run_ble_worker(
-    commands: Receiver<BleWorkerCommand>,
-    command_sender: Sender<BleWorkerCommand>,
-    event_sender: tokio_mpsc::Sender<HardwareCommunicationManagerEvent>,
-    scanning: Arc<AtomicBool>,
-    available: Arc<AtomicBool>,
-    device_configuration: Arc<DeviceConfigurationManager>,
-    candidate_sender: tokio_mpsc::Sender<Esp32BleCandidate>,
-) {
+fn run_ble_worker(commands: Receiver<BleWorkerCommand>, context: BleWorkerContext) {
+    let BleWorkerContext {
+        command_sender,
+        event_sender,
+        scanning,
+        available,
+        device_configuration,
+        implemented_protocols,
+        candidate_sender,
+    } = context;
     let ble_device = BLEDevice::take();
     if let Err(error) = ble_device.set_preferred_mtu(512) {
         log::warn!("Could not set preferred BLE MTU: {error:?}");
@@ -569,6 +622,7 @@ fn run_ble_worker(
                                 command,
                                 ble_device,
                                 &mut seen,
+                                &mut reported_addresses,
                                 &mut connections,
                                 &mut retired_clients,
                                 &next_session_id,
@@ -678,7 +732,8 @@ fn run_ble_worker(
                         &advertisement.advertised_services,
                     ),
                 );
-                let matching_protocols = matching_protocols(&device_configuration, &specifier);
+                let matching_protocols =
+                    matching_protocols(&device_configuration, &implemented_protocols, &specifier);
                 if matching_protocols.is_empty() {
                     pending_candidates.remove(&address_string);
                     return None;
@@ -784,17 +839,18 @@ fn collect_manufacturer_ids(specifiers: &[ProtocolCommunicationSpecifier], ids: 
 
 fn matching_protocols(
     device_configuration: &DeviceConfigurationManager,
+    implemented_protocols: &HashSet<String>,
     candidate: &ProtocolCommunicationSpecifier,
 ) -> Vec<String> {
     let mut matches = Vec::new();
 
     for entry in device_configuration.user_communication_specifiers().iter() {
-        if entry.value().contains(candidate) {
+        if implemented_protocols.contains(entry.key()) && entry.value().contains(candidate) {
             matches.push(entry.key().clone());
         }
     }
     for (protocol, specifiers) in device_configuration.base_communication_specifiers() {
-        if specifiers.contains(candidate) {
+        if implemented_protocols.contains(protocol) && specifiers.contains(candidate) {
             matches.push(protocol.clone());
         }
     }
@@ -820,6 +876,7 @@ fn handle_worker_command(
     command: BleWorkerCommand,
     ble_device: &BLEDevice,
     seen: &mut HashMap<String, Advertisement>,
+    reported_addresses: &mut HashSet<String>,
     connections: &mut HashMap<u32, ConnectedDevice>,
     retired_clients: &mut Vec<(Instant, Box<BLEClient>)>,
     next_session_id: &AtomicU32,
@@ -836,6 +893,7 @@ fn handle_worker_command(
             events,
             reply,
         } => {
+            let reported_address = address_string.clone();
             let result = esp_idf_svc::hal::task::block_on(async {
                 let address = address.to_nimble()?;
                 let mut client = Box::new(ble_device.new_client());
@@ -858,11 +916,15 @@ fn handle_worker_command(
                         address: address_string,
                         events,
                         endpoints: HashMap::new(),
+                        subscribed_endpoints: HashSet::new(),
                         disconnected_since: None,
                     },
                 );
                 Ok(session_id)
             });
+            if result.is_err() {
+                reported_addresses.remove(&reported_address);
+            }
             log_worker_memory("connect");
             let _ = reply.send(result);
         }
@@ -924,8 +986,29 @@ fn handle_worker_command(
         } => {
             let result = esp_idf_svc::hal::task::block_on(async {
                 let characteristic = characteristic_mut(connections, session_id, endpoint)?;
+                let response = if with_response {
+                    if characteristic.can_write() {
+                        true
+                    } else if characteristic.can_write_no_response() {
+                        log::warn!(
+                            "BLE endpoint {endpoint} lacks write-with-response; falling back to write-without-response"
+                        );
+                        false
+                    } else {
+                        return Err(format!("endpoint {endpoint} is not writable"));
+                    }
+                } else if characteristic.can_write_no_response() {
+                    false
+                } else if characteristic.can_write() {
+                    log::warn!(
+                        "BLE endpoint {endpoint} lacks write-without-response; falling back to write-with-response"
+                    );
+                    true
+                } else {
+                    return Err(format!("endpoint {endpoint} is not writable"));
+                };
                 characteristic
-                    .write_value(&data, with_response)
+                    .write_value(&data, response)
                     .await
                     .map_err(|error| format!("{error:?}"))
             });
@@ -938,20 +1021,40 @@ fn handle_worker_command(
         } => {
             let result = esp_idf_svc::hal::task::block_on(async {
                 let connection = connection_mut(connections, session_id)?;
+                if connection.subscribed_endpoints.contains(&endpoint) {
+                    return Ok(());
+                }
                 let address = connection.address.clone();
                 let events = connection.events.clone();
                 let characteristic = connection
                     .endpoints
                     .get_mut(&endpoint)
                     .ok_or_else(|| format!("endpoint {endpoint} was not specialized"))?;
+                let mut first_notification = true;
                 characteristic.on_notify(move |data| {
-                    let _ = events.send(HardwareEvent::Notification(
+                    let forwarded = events
+                        .send(HardwareEvent::Notification(
                         address.clone(),
                         endpoint,
                         data.to_vec(),
-                    ));
+                        ))
+                        .is_ok();
+                    if first_notification {
+                        if forwarded {
+                            log::info!(
+                                "Forwarded first BLE notification from {address} endpoint={endpoint} bytes={}",
+                                data.len()
+                            );
+                        } else {
+                            log::info!(
+                                "Received first BLE notification from {address} endpoint={endpoint} bytes={} with no active protocol listener",
+                                data.len()
+                            );
+                        }
+                        first_notification = false;
+                    }
                 });
-                if characteristic.can_notify() {
+                let subscribe_result = if characteristic.can_notify() {
                     characteristic
                         .subscribe_notify(true)
                         .await
@@ -963,7 +1066,10 @@ fn handle_worker_command(
                         .map_err(|error| format!("{error:?}"))
                 } else {
                     Err(format!("endpoint {endpoint} cannot notify or indicate"))
-                }
+                };
+                subscribe_result?;
+                connection.subscribed_endpoints.insert(endpoint);
+                Ok(())
             });
             let _ = reply.send(result);
         }
@@ -973,11 +1079,20 @@ fn handle_worker_command(
             reply,
         } => {
             let result = esp_idf_svc::hal::task::block_on(async {
-                let characteristic = characteristic_mut(connections, session_id, endpoint)?;
+                let connection = connection_mut(connections, session_id)?;
+                if !connection.subscribed_endpoints.contains(&endpoint) {
+                    return Ok(());
+                }
+                let characteristic = connection
+                    .endpoints
+                    .get_mut(&endpoint)
+                    .ok_or_else(|| format!("endpoint {endpoint} was not specialized"))?;
                 characteristic
                     .unsubscribe(true)
                     .await
-                    .map_err(|error| format!("{error:?}"))
+                    .map_err(|error| format!("{error:?}"))?;
+                connection.subscribed_endpoints.remove(&endpoint);
+                Ok(())
             });
             let _ = reply.send(result);
         }

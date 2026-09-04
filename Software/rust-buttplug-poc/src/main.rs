@@ -1,14 +1,18 @@
 use anyhow::Context;
 use buttplug_client::{ButtplugClient, ButtplugClientEvent};
 use buttplug_client_in_process::ButtplugInProcessClientConnectorBuilder;
-use buttplug_server::{ButtplugServerBuilder, device::ServerDeviceManagerBuilder};
-use buttplug_server_device_config::load_protocol_configs;
+use buttplug_server::{
+    ButtplugServerBuilder,
+    device::{ServerDeviceManagerBuilder, get_default_protocol_map},
+};
+use buttplug_server_device_config::{ProtocolCommunicationSpecifier, load_protocol_configs};
 use esp_idf_svc::hal::{
     gpio::{PinDriver, Pull},
     peripherals::Peripherals,
 };
 use futures::StreamExt;
 use std::{
+    collections::HashSet,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -124,9 +128,46 @@ fn main() -> anyhow::Result<()> {
         );
         log_memory("upstream catalog loaded");
 
+        let implemented_protocols: Arc<HashSet<String>> =
+            Arc::new(get_default_protocol_map().into_keys().collect());
+        let configured_ble_protocols: HashSet<&String> = device_configuration
+            .base_communication_specifiers()
+            .iter()
+            .filter(|(_, specifiers)| {
+                specifiers.iter().any(|specifier| {
+                    matches!(specifier, ProtocolCommunicationSpecifier::BluetoothLE(_))
+                })
+            })
+            .map(|(protocol, _)| protocol)
+            .collect();
+        let factory_backed_ble_protocol_count = configured_ble_protocols
+            .iter()
+            .filter(|protocol| implemented_protocols.contains(protocol.as_str()))
+            .count();
+        let mut configuration_only_protocols: Vec<&str> = configured_ble_protocols
+            .iter()
+            .filter(|protocol| !implemented_protocols.contains(protocol.as_str()))
+            .map(|protocol| protocol.as_str())
+            .collect();
+        configuration_only_protocols.sort_unstable();
+        log::info!(
+            "Official protocol inventory: {} factories, {} BLE configs, {} factory-backed BLE protocol IDs",
+            implemented_protocols.len(),
+            configured_ble_protocols.len(),
+            factory_backed_ble_protocol_count
+        );
+        if !configuration_only_protocols.is_empty() {
+            log::warn!(
+                "Ignoring upstream BLE config entries without protocol factories: {configuration_only_protocols:?}"
+            );
+        }
+
         let (candidate_sender, mut candidate_receiver) = tokio::sync::mpsc::channel(32);
-        let (ble_manager_builder, candidate_approver) =
-            Esp32BleCommunicationManagerBuilder::new(device_configuration.clone(), candidate_sender);
+        let (ble_manager_builder, candidate_approver) = Esp32BleCommunicationManagerBuilder::new(
+            device_configuration.clone(),
+            implemented_protocols,
+            candidate_sender,
+        );
         let mut device_manager_builder =
             ServerDeviceManagerBuilder::new_with_arc(device_configuration.clone());
         device_manager_builder.comm_manager(ble_manager_builder);

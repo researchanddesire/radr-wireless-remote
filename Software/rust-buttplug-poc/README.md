@@ -36,11 +36,27 @@ The local `esp32_ble` module provides only the target-specific transport:
 - connection and GATT service/characteristic discovery
 - reads and writes, including write-with-response selection
 - notification and indication subscription
+- idempotent subscriptions and write-mode fallback matching the behavior of
+  Buttplug's desktop BLE manager
 - disconnect and hardware events
 
 The full upstream catalog is loaded, but this transport makes only its BLE
 devices usable. Upstream USB, HID, serial, websocket, and host-specific
 communication managers are not present on the ESP32.
+
+At the pinned revision, the official server exports 141 protocol factories and
+the catalog contains 138 BLE protocol IDs. Their intersection is 132
+factory-backed BLE protocol IDs. Six catalog-only entries (`cueme`,
+`kiiroo-v1`, `libo-karen`, `muse`, `sayberx`, and `twerkingbutt`) have no
+factory in the official server,
+so RADR excludes them from its supported-candidate list just as the upstream
+server ultimately would. This filter is derived from the upstream factory map;
+it is not a locally maintained device list.
+
+Those 132 BLE protocols resolve to 1,021 protocol/identifier entries in the
+schema, representing 870 unique device-definition IDs and 853 definition
+names. These are upstream catalog-coverage counts, not claims that every
+physical model has been qualified on RADR hardware.
 
 The only patched transitive crate is the included DashMap 6.2.1 source. On
 ESP-IDF, its host-parallelism-based default can select an invalid shard count.
@@ -113,6 +129,10 @@ configuration/protocol contribution or a local user configuration.
   boxed before connection so their addresses remain stable, and disconnected
   clients receive a short retirement grace period before deallocation. Remote
   peripheral termination was tested after this lifecycle fix without a panic.
+- BLE session ownership moves from the GATT specializer to the finished
+  hardware object. Either owner queues a disconnect when dropped, so a broad
+  advertisement match that fails GATT or protocol initialization does not leak
+  a client connection.
 
 ## Updating upstream support
 
@@ -168,12 +188,27 @@ peripheral before starting the RADR scan:
 ```sh
 swiftc -framework CoreBluetooth -framework Foundation \
   tools/macos_ble_mock.swift -o /tmp/radr-buttplug-ble-mock
-/tmp/radr-buttplug-ble-mock
+/tmp/radr-buttplug-ble-mock mizzzee-v2
 ```
 
 The RADR serial log lists and selects `XHT`; press the center under-screen
 button to approve the connection. The mock then prints each write it receives,
 culminating in the seven-byte all-stop packet shown above.
+
+The same mock has a second profile for the receive path:
+
+```sh
+/tmp/radr-buttplug-ble-mock vibcrafter
+```
+
+That profile advertises the official `Janna` VibCrafter configuration, exposes
+its configured TX/RX characteristics, accepts the upstream encrypted
+authentication write, and notifies the upstream protocol with the correctly
+encrypted `OK;` response. It deliberately exposes only write-with-response so
+the ESP32 transport also exercises the same write-mode fallback provided by
+Buttplug's desktop BLE manager. A successful run reaches `VibCrafter Janna`,
+enumerates its two vibration features, and logs that the first notification was
+forwarded to the official protocol listener.
 
 For unattended transport regression testing only, the exact mock name can be
 approved at compile time. This setting is absent from normal builds:
@@ -181,3 +216,5 @@ approved at compile time. This setting is absent from normal builds:
 ```sh
 RADR_BUTTPLUG_AUTO_APPROVE_NAME=XHT cargo build --release --locked
 ```
+
+Use `Janna` instead of `XHT` when running the VibCrafter receive-path profile.

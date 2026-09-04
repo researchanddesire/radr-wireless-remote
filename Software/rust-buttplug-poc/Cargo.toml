@@ -1,0 +1,42 @@
+[package]
+name = "radr-buttplug-poc"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "radr-buttplug-poc"
+harness = false
+
+[profile.dev]
+debug = true
+opt-level = "z"
+panic = "abort"
+
+[profile.release]
+codegen-units = 1
+debug = 1
+lto = false
+opt-level = "s"
+panic = "abort"
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+buttplug_client = { git = "https://github.com/buttplugio/buttplug", rev = "9571b3db42ee2d7b3342ab9d40eb5c9e45679444", default-features = false, features = ["tokio-runtime"] }
+buttplug_client_in_process = { git = "https://github.com/buttplugio/buttplug", rev = "9571b3db42ee2d7b3342ab9d40eb5c9e45679444", default-features = false, features = ["tokio-runtime"] }
+buttplug_core = { git = "https://github.com/buttplugio/buttplug", rev = "9571b3db42ee2d7b3342ab9d40eb5c9e45679444", default-features = false, features = ["tokio-runtime"] }
+buttplug_server = { git = "https://github.com/buttplugio/buttplug", rev = "9571b3db42ee2d7b3342ab9d40eb5c9e45679444", default-features = false, features = ["tokio-runtime"] }
+buttplug_server_device_config = { git = "https://github.com/buttplugio/buttplug", rev = "9571b3db42ee2d7b3342ab9d40eb5c9e45679444" }
+esp32-nimble = "0.12.0"
+esp-idf-svc = { version = "0.52.1", features = ["critical-section"] }
+futures = "0.3"
+log = "0.4"
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "sync", "time"] }
+uuid = "1"
+
+[build-dependencies]
+embuild = "0.33"
+
+[patch.crates-io]
+dashmap = { path = "vendor/dashmap" }

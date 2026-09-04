@@ -1,0 +1,78 @@
+name: Rust Buttplug Probe
+
+on:
+  pull_request:
+    branches:
+      - staging
+    paths:
+      - ".github/workflows/rust_buttplug_probe.yml"
+      - "Software/rust-buttplug-poc/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install-bundle:
+    name: Build install bundle
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Software/rust-buttplug-poc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Cargo sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+          key: ${{ runner.os }}-radr-buttplug-${{ hashFiles('Software/rust-buttplug-poc/Cargo.lock') }}
+
+      - name: Install Espressif Rust toolchain
+        uses: esp-rs/xtensa-toolchain@ec6d36527049a7f4fb2cb0c1a644668c1bb8a2a4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          buildtargets: esp32s3
+          default: true
+          ldproxy: true
+          version: "1.97.0.0"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install espflash
+        working-directory: .
+        run: cargo +stable install espflash --version 4.5.0 --locked
+
+      - name: Test bundle builder
+        run: |
+          bash -n tools/build_install_bundle.sh
+          python tools/test_build_install_bundle.py
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Build release firmware
+        run: cargo build --release --locked
+
+      - name: Lint release firmware
+        run: cargo clippy --release --locked -- -D warnings
+
+      - name: Build and verify install bundle
+        run: |
+          ./tools/build_install_bundle.sh --skip-build
+          cd dist
+          sha256sum --check SHA256SUMS
+
+      - name: Upload install bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: radr-buttplug-install-bundle
+          path: Software/rust-buttplug-poc/dist
+          if-no-files-found: error
+          retention-days: 14

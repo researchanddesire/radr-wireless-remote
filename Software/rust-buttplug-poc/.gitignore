@@ -1,4 +1,5 @@
 /.embuild/
+/dist/
 /target/
 /sdkconfig
 /sdkconfig.old

@@ -9,10 +9,12 @@ process, and supplies an ESP32 NimBLE implementation of Buttplug's generic
 Bluetooth LE hardware interfaces.
 
 This is the practical equivalent of installing Buttplug as a firmware package:
-the upstream crates are linked into one ESP-IDF application image. An ELF is
-also produced, but it is a linker/debug artifact rather than a second program
-that the existing Arduino firmware can launch. The ESP32 has no process loader
-or desktop operating system, so a sidecar ELF is not a useful deployment model.
+the upstream crates are linked into one ESP-IDF application image, and the
+bundle builder packages that app with its bootloader and partition table in one
+factory image. An ELF is also produced, but it is a linker/debug artifact rather
+than a second program that the existing Arduino firmware can launch. The ESP32
+has no process loader or desktop operating system, so a sidecar ELF is not a
+useful deployment model.
 
 The probe is intentionally separate from the production Arduino target. It does
 not yet include the RADR display, controls, updater, or motor-control
@@ -197,6 +199,49 @@ export PATH="$HOME/.cargo/bin:$PATH"
 espflash flash --monitor --port /dev/cu.usbserial-0001 \
   target/xtensa-esp32s3-espidf/release/radr-buttplug-poc
 ```
+
+## Installable bundle
+
+Build the firmware and a validated installation package with one command:
+
+```sh
+./tools/build_install_bundle.sh
+```
+
+The script uses the project toolchain, builds with the lockfile, and writes these
+ignored artifacts under `dist/`:
+
+- `radr-buttplug-factory.bin`: one compact image containing the ESP32-S3
+  bootloader at `0x0`, the exact dual-OTA partition table at `0x8000`, and the
+  Rust application at `0x10000`
+- `radr-buttplug-app.bin`: the same application in standalone ESP-IDF image
+  form for partition-aware or future OTA tooling
+- `manifest.json` and `install.html`: an ESP Web Tools package for an HTTPS
+  host
+- `bundle.json`: exact target, source-revision, partition, size, and hash
+  metadata
+- `SHA256SUMS`: hashes for every file in the package
+
+The builder rejects a bundle unless both images identify as ESP32-S3 DIO/80 MHz
+16 MB images, the binary partition table exactly matches `partitions.csv`, the
+application fits in `app0`, and the application bytes in both artifacts are
+identical. It also requires blank NVS and OTA-selection sectors. The current
+factory image is 4,907,504 bytes; it packages the 4,841,968-byte application
+without padding the unused remainder of flash.
+
+The factory image can be installed directly at offset zero. This replaces the
+bootloader, partition table, NVS, OTA selection data, and active application, so
+select the intended RADR serial port explicitly:
+
+```sh
+espflash write-bin --chip esp32s3 --port /dev/cu.usbserial-0001 \
+  0x0 dist/radr-buttplug-factory.bin
+```
+
+For browser installation, host the complete `dist/` directory on one HTTPS
+origin and open `install.html`. Pull requests that touch this probe independently
+rebuild, validate, checksum, and upload the same directory as the
+`radr-buttplug-install-bundle` CI artifact.
 
 ## Reproducing the BLE protocol test
 

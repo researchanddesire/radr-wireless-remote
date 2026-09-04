@@ -105,10 +105,6 @@ pub fn with_state(state: &SharedRadBleState, update: impl FnOnce(&mut RadBleRunt
     }
 }
 
-pub fn control_lease_active(state: &SharedRadBleState) -> bool {
-    read_state(state).lease_active
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RadBleScreenState {
     pub phase: String,

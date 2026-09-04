@@ -22,6 +22,11 @@ It also exposes those controls and a lossless copy of the complete framebuffer
 over RAD BLE for Motion Lab automation. It does not include the production
 updater or the unrelated Arduino device-control implementations.
 
+Both rotary encoders use the ESP32-S3 pulse-counter peripherals for quadrature
+edge capture. Full-screen SPI refreshes can delay the Rust event loop without
+losing knob movement, and physical knob input remains available while a RAD BLE
+control lease is active.
+
 ## What is upstream and what is local
 
 The five direct Buttplug dependencies are pinned to official upstream revision
@@ -121,9 +126,14 @@ by this firmware without changing the transport or protocols.
 ## Physical verification
 
 The release firmware was built and flashed to a RADR ESP32-S3 with 16 MB flash
-and 8 MB octal PSRAM. The application occupies 4,970,000 of 6,553,600 bytes in
-one OTA slot (75.84%). The panel uses `LandscapeInverted(true)`, retaining the
+and 8 MB octal PSRAM. The application occupies 4,978,688 of 6,553,600 bytes in
+one OTA slot (75.97%). The panel uses `LandscapeInverted(true)`, retaining the
 requested horizontal mirror and applying the subsequent 180-degree rotation.
+
+Both physical encoders were exercised on the connected-control screen. The
+right encoder selected each upstream-derived setting, while slow and fast left
+encoder turns produced single- and multi-detent changes in five-percent steps;
+the resulting values were independently visible in structured RAD BLE state.
 
 Motion Lab generated 119 BLE emulator profiles from all 120 active tests in the
 unchanged upstream fixture suite at revision
@@ -257,7 +267,7 @@ The builder rejects a bundle unless both images identify as ESP32-S3 DIO/80 MHz
 16 MB images, the binary partition table exactly matches `partitions.csv`, the
 application fits in `app0`, and the application bytes in both artifacts are
 identical. It also requires blank NVS and OTA-selection sectors. The current
-factory image is 5,035,536 bytes; it packages the 4,970,000-byte application
+factory image is 5,044,224 bytes; it packages the 4,978,688-byte application
 without padding the unused remainder of flash.
 
 The factory image can be installed directly at offset zero. This replaces the

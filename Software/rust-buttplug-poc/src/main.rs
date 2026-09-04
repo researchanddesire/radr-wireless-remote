@@ -11,7 +11,11 @@ use buttplug_server::{
 };
 use buttplug_server_device_config::{ProtocolCommunicationSpecifier, load_protocol_configs};
 use esp_idf_svc::hal::{
-    gpio::{PinDriver, Pull},
+    gpio::{AnyInputPin, InputPin, PinDriver, Pull},
+    pcnt::{
+        PcntUnitDriver,
+        config::{ChannelEdgeAction, ChannelLevelAction, GlitchFilterConfig, UnitConfig},
+    },
     peripherals::Peripherals,
 };
 use futures::StreamExt;
@@ -64,62 +68,78 @@ impl DebouncedButton {
     }
 }
 
-struct QuadratureEncoder {
-    previous: u8,
-    sampled: u8,
-    stable_samples: u8,
-    quarter_steps: i8,
-    last_transition: Instant,
+const ENCODER_LOW_LIMIT: i32 = i16::MIN as i32;
+const ENCODER_HIGH_LIMIT: i32 = i16::MAX as i32;
+const ENCODER_COUNTS_PER_DETENT: i32 = 4;
+
+struct QuadratureEncoder<'d> {
+    unit: PcntUnitDriver<'d>,
+    previous_detent: i32,
 }
 
-impl QuadratureEncoder {
-    fn new(a_high: bool, b_high: bool) -> Self {
-        Self {
-            previous: u8::from(a_high) << 1 | u8::from(b_high),
-            sampled: u8::from(a_high) << 1 | u8::from(b_high),
-            stable_samples: 0,
-            quarter_steps: 0,
-            last_transition: Instant::now(),
-        }
+impl<'d> QuadratureEncoder<'d> {
+    fn new(
+        pin_a: impl InputPin + 'd,
+        pin_b: impl InputPin + 'd,
+    ) -> Result<Self, esp_idf_svc::sys::EspError> {
+        let pin_a_number = pin_a.pin();
+        let pin_b_number = pin_b.pin();
+        esp_idf_svc::sys::EspError::convert(unsafe {
+            esp_idf_svc::sys::gpio_set_pull_mode(
+                pin_a_number.into(),
+                esp_idf_svc::sys::gpio_pull_mode_t_GPIO_PULLUP_ONLY,
+            )
+        })?;
+        esp_idf_svc::sys::EspError::convert(unsafe {
+            esp_idf_svc::sys::gpio_set_pull_mode(
+                pin_b_number.into(),
+                esp_idf_svc::sys::gpio_pull_mode_t_GPIO_PULLUP_ONLY,
+            )
+        })?;
+
+        let mut unit = PcntUnitDriver::new(&UnitConfig {
+            low_limit: ENCODER_LOW_LIMIT,
+            high_limit: ENCODER_HIGH_LIMIT,
+            accum_count: true,
+            ..Default::default()
+        })?;
+        unit.set_glitch_filter(Some(&GlitchFilterConfig {
+            max_glitch: Duration::from_nanos(1_000),
+            ..Default::default()
+        }))?;
+
+        let (duplicate_pin_a, duplicate_pin_b) = unsafe {
+            (
+                AnyInputPin::steal(pin_a_number),
+                AnyInputPin::steal(pin_b_number),
+            )
+        };
+        unit.add_channel(Some(pin_a), Some(pin_b), &Default::default())?
+            .set_edge_action(ChannelEdgeAction::Decrease, ChannelEdgeAction::Increase)?
+            .set_level_action(ChannelLevelAction::Keep, ChannelLevelAction::Inverse)?;
+        unit.add_channel(
+            Some(duplicate_pin_b),
+            Some(duplicate_pin_a),
+            &Default::default(),
+        )?
+        .set_edge_action(ChannelEdgeAction::Increase, ChannelEdgeAction::Decrease)?
+        .set_level_action(ChannelLevelAction::Keep, ChannelLevelAction::Inverse)?;
+
+        unit.enable()?;
+        unit.add_watch_points_and_clear([ENCODER_LOW_LIMIT, ENCODER_HIGH_LIMIT])?;
+        unit.start()?;
+
+        Ok(Self {
+            unit,
+            previous_detent: 0,
+        })
     }
 
-    fn update(&mut self, a_high: bool, b_high: bool) -> i32 {
-        const TRANSITIONS: [i8; 16] = [0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0];
-        let current = u8::from(a_high) << 1 | u8::from(b_high);
-        if current != self.sampled {
-            self.sampled = current;
-            self.stable_samples = 0;
-            return 0;
-        }
-        if current == self.previous {
-            return 0;
-        }
-        self.stable_samples = self.stable_samples.saturating_add(1);
-        if self.stable_samples < 3 {
-            return 0;
-        }
-        self.stable_samples = 0;
-        if self.last_transition.elapsed() > Duration::from_millis(250) {
-            self.quarter_steps = 0;
-        }
-        let transition = usize::from(self.previous << 2 | current);
-        self.previous = current;
-        self.last_transition = Instant::now();
-        let quarter_step = TRANSITIONS[transition];
-        if quarter_step == 0 {
-            self.quarter_steps = 0;
-            return 0;
-        }
-        self.quarter_steps += quarter_step;
-        if self.quarter_steps >= 4 {
-            self.quarter_steps = 0;
-            1
-        } else if self.quarter_steps <= -4 {
-            self.quarter_steps = 0;
-            -1
-        } else {
-            0
-        }
+    fn take_delta(&mut self) -> Result<i32, esp_idf_svc::sys::EspError> {
+        let detent = self.unit.get_count()? / ENCODER_COUNTS_PER_DETENT;
+        let delta = detent - self.previous_detent;
+        self.previous_detent = detent;
+        Ok(delta)
     }
 }
 
@@ -380,21 +400,13 @@ fn main() -> anyhow::Result<()> {
         .context("could not initialize the center under-screen button")?;
     let right_button = PinDriver::input(pins.gpio40, Pull::Up)
         .context("could not initialize the right under-screen button")?;
-    let left_encoder_a = PinDriver::input(pins.gpio10, Pull::Up)
-        .context("could not initialize the left encoder A input")?;
-    let left_encoder_b = PinDriver::input(pins.gpio11, Pull::Up)
-        .context("could not initialize the left encoder B input")?;
-    let right_encoder_a = PinDriver::input(pins.gpio42, Pull::Up)
-        .context("could not initialize the right encoder A input")?;
-    let right_encoder_b = PinDriver::input(pins.gpio41, Pull::Up)
-        .context("could not initialize the right encoder B input")?;
     let mut left_debounce = DebouncedButton::new(left_button.is_low());
     let mut center_debounce = DebouncedButton::new(center_button.is_low());
     let mut right_debounce = DebouncedButton::new(right_button.is_low());
-    let mut left_encoder =
-        QuadratureEncoder::new(left_encoder_a.is_high(), left_encoder_b.is_high());
-    let mut right_encoder =
-        QuadratureEncoder::new(right_encoder_a.is_high(), right_encoder_b.is_high());
+    let mut left_encoder = QuadratureEncoder::new(pins.gpio10, pins.gpio11)
+        .context("could not initialize the left hardware quadrature counter")?;
+    let mut right_encoder = QuadratureEncoder::new(pins.gpio42, pins.gpio41)
+        .context("could not initialize the right hardware quadrature counter")?;
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_time()
@@ -502,7 +514,7 @@ fn main() -> anyhow::Result<()> {
         let mut selected_control = 0_usize;
         let mut button_poll = tokio::time::interval(Duration::from_millis(10));
         button_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut encoder_poll = tokio::time::interval(Duration::from_millis(2));
+        let mut encoder_poll = tokio::time::interval(Duration::from_millis(10));
         encoder_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut display_poll = tokio::time::interval(Duration::from_millis(100));
         display_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -856,12 +868,11 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 _ = encoder_poll.tick() => {
-                    let remote_control_active = rad_ble::control_lease_active(&rad_ble_state);
-                    let left_delta = left_encoder.update(
-                        left_encoder_a.is_high(),
-                        left_encoder_b.is_high(),
-                    );
-                    if left_delta != 0 && !remote_control_active {
+                    let left_delta = left_encoder
+                        .take_delta()
+                        .context("could not read the left hardware quadrature counter")?;
+                    if left_delta != 0 {
+                        log::info!("Physical left encoder delta: {left_delta}");
                         if active_device.is_some() {
                             adjust_control(
                                 &rad_ble_state,
@@ -880,11 +891,11 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
 
-                    let right_delta = right_encoder.update(
-                        right_encoder_a.is_high(),
-                        right_encoder_b.is_high(),
-                    );
-                    if right_delta != 0 && !remote_control_active {
+                    let right_delta = right_encoder
+                        .take_delta()
+                        .context("could not read the right hardware quadrature counter")?;
+                    if right_delta != 0 {
+                        log::info!("Physical right encoder delta: {right_delta}");
                         if active_device.is_some() {
                             select_control(
                                 &rad_ble_state,

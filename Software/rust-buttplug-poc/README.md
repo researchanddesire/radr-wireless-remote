@@ -48,10 +48,10 @@ At the pinned revision, the official server exports 141 protocol factories and
 the catalog contains 138 BLE protocol IDs. Their intersection is 132
 factory-backed BLE protocol IDs. Six catalog-only entries (`cueme`,
 `kiiroo-v1`, `libo-karen`, `muse`, `sayberx`, and `twerkingbutt`) have no
-factory in the official server,
-so RADR excludes them from its supported-candidate list just as the upstream
-server ultimately would. This filter is derived from the upstream factory map;
-it is not a locally maintained device list.
+factory in the official server, so RADR excludes them from its
+supported-candidate list just as the upstream server ultimately would. This
+filter is derived from the upstream factory map, not a locally maintained
+device list.
 
 Those 132 BLE protocols resolve to 1,021 protocol/identifier entries in the
 schema, representing 870 unique device-definition IDs and 853 definition
@@ -98,11 +98,15 @@ RADR then:
 - sent all-stop successfully
 - wrote the exact upstream-encoded packet `69 96 04 02 00 2c 00`
 
-The final release application occupies 4,820,928 of 6,553,600 bytes in one OTA
-slot (73.56%). After approved connection and command transmission, the measured
-free heaps were 139,820 bytes internal and 6,303,852 bytes external. The main
-task retained 45,668 bytes of stack headroom; the BLE worker retained 12,952
-bytes.
+Those physical results cover the base probe through commit `32806a9`. The
+factory filtering, receive-path instrumentation, and transport lifecycle
+hardening in `dac57c4` are release-build verified but await a fresh hardware run.
+
+The current release application occupies 4,836,416 of 6,553,600 bytes in one
+OTA slot (73.80%). On the physically tested predecessor image, after approved
+connection and command transmission, the measured free heaps were 139,820
+bytes internal and 6,303,852 bytes external. The main task retained 45,668
+bytes of stack headroom; the BLE worker retained 12,952 bytes.
 
 The nearby device advertising as `S57 D17E LE` was observed by the ESP32, but
 Buttplug schema 5.30 has no matching name, service `0xFE07`, or manufacturer
@@ -207,7 +211,7 @@ authentication write, and notifies the upstream protocol with the correctly
 encrypted `OK;` response. It deliberately exposes only write-with-response so
 the ESP32 transport also exercises the same write-mode fallback provided by
 Buttplug's desktop BLE manager. A successful run reaches `VibCrafter Janna`,
-enumerates its two vibration features, and logs that the first notification was
+enumerates its vibration feature, and logs that the first notification was
 forwarded to the official protocol listener.
 
 For unattended transport regression testing only, the exact mock name can be

@@ -1,15 +1,11 @@
+pub use crate::screen::{RadBleCandidateSummary, RadBleControlSetting, RadBleScreenState};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use esp32_nimble::{
     BLEAdvertisementData, BLECharacteristic, BLEDevice, NimbleProperties,
     utilities::mutex::Mutex as NimbleMutex, uuid128,
 };
-use serde::Serialize;
 use serde_json::{Value, json};
-use std::{
-    sync::{Arc, Mutex},
-    thread,
-    time::Duration,
-};
+use std::{sync::Arc, thread, time::Duration};
 use tokio::sync::mpsc;
 
 pub const SERVICE_UUID: &str = "522b443a-5241-4452-0001-420badbabe69";
@@ -25,161 +21,17 @@ pub enum RadBleControlEvent {
     Reset,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RadBleCandidateSummary {
-    pub name: String,
-    pub protocols: Vec<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RadBleControlSetting {
-    pub feature_index: u32,
-    pub label: String,
-    pub output_type: String,
-    pub value_percent: u8,
-}
-
-#[derive(Debug)]
-pub struct RadBleRuntimeState {
-    pub phase: String,
-    pub candidate_count: usize,
-    pub selected_index: Option<usize>,
-    pub selected_name: Option<String>,
-    pub selected_protocols: Vec<String>,
-    pub candidates: Vec<RadBleCandidateSummary>,
-    pub connected_name: Option<String>,
-    pub feature_count: usize,
-    pub features: Vec<Value>,
-    pub selected_control_index: Option<usize>,
-    pub controls: Vec<RadBleControlSetting>,
-    pub control_revision: u32,
-    pub last_connected_name: Option<String>,
-    pub last_feature_count: usize,
-    pub last_features: Vec<Value>,
-    pub last_error: Option<String>,
-    pub framebuffer_generation: u32,
-    pub framebuffer_hash: u32,
-    pub framebuffer_rle: Vec<u8>,
-    lease_active: bool,
-}
-
-impl Default for RadBleRuntimeState {
-    fn default() -> Self {
-        Self {
-            phase: "starting".to_owned(),
-            candidate_count: 0,
-            selected_index: None,
-            selected_name: None,
-            selected_protocols: Vec::new(),
-            candidates: Vec::new(),
-            connected_name: None,
-            feature_count: 0,
-            features: Vec::new(),
-            selected_control_index: None,
-            controls: Vec::new(),
-            control_revision: 0,
-            last_connected_name: None,
-            last_feature_count: 0,
-            last_features: Vec::new(),
-            last_error: None,
-            framebuffer_generation: 0,
-            framebuffer_hash: 0,
-            framebuffer_rle: Vec::new(),
-            lease_active: false,
-        }
-    }
-}
-
-pub type SharedRadBleState = Arc<Mutex<RadBleRuntimeState>>;
-
-pub fn shared_state() -> SharedRadBleState {
-    Arc::new(Mutex::new(RadBleRuntimeState::default()))
-}
-
-pub fn with_state(state: &SharedRadBleState, update: impl FnOnce(&mut RadBleRuntimeState)) {
-    match state.lock() {
-        Ok(mut state) => update(&mut state),
-        Err(poisoned) => update(&mut poisoned.into_inner()),
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RadBleScreenState {
-    pub phase: String,
-    pub candidate_count: usize,
-    pub selected_index: Option<usize>,
-    pub selected_name: Option<String>,
-    pub selected_protocols: Vec<String>,
-    pub candidates: Vec<RadBleCandidateSummary>,
-    pub connected_name: Option<String>,
-    pub feature_count: usize,
-    pub selected_control_index: Option<usize>,
-    pub controls: Vec<RadBleControlSetting>,
-    pub control_revision: u32,
-    pub last_error: Option<String>,
-}
-
-pub fn screen_state(state: &SharedRadBleState) -> RadBleScreenState {
-    let state = read_state(state);
-    RadBleScreenState {
-        phase: state.phase.clone(),
-        candidate_count: state.candidate_count,
-        selected_index: state.selected_index,
-        selected_name: state.selected_name.clone(),
-        selected_protocols: state.selected_protocols.clone(),
-        candidates: state.candidates.clone(),
-        connected_name: state.connected_name.clone(),
-        feature_count: state.feature_count,
-        selected_control_index: state.selected_control_index,
-        controls: state.controls.clone(),
-        control_revision: state.control_revision,
-        last_error: state.last_error.clone(),
-    }
-}
-
-pub fn set_framebuffer(state: &SharedRadBleState, pixels: &[u16]) {
-    let mut raw_hash = 0x811c_9dc5_u32;
-    let mut rle = Vec::new();
-    let mut cursor = 0;
-    while cursor < pixels.len() {
-        let color = pixels[cursor];
-        let mut count = 1_usize;
-        while cursor + count < pixels.len()
-            && pixels[cursor + count] == color
-            && count < usize::from(u16::MAX)
-        {
-            count += 1;
-        }
-        rle.extend_from_slice(&(count as u16).to_le_bytes());
-        rle.extend_from_slice(&color.to_le_bytes());
-        for pixel in &pixels[cursor..cursor + count] {
-            for byte in pixel.to_le_bytes() {
-                raw_hash ^= u32::from(byte);
-                raw_hash = raw_hash.wrapping_mul(0x0100_0193);
-            }
-        }
-        cursor += count;
-    }
-    with_state(state, |state| {
-        state.framebuffer_generation = state.framebuffer_generation.wrapping_add(1);
-        state.framebuffer_hash = raw_hash;
-        state.framebuffer_rle = rle;
-    });
-}
-
-fn read_state(state: &SharedRadBleState) -> std::sync::MutexGuard<'_, RadBleRuntimeState> {
-    state
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
+pub use crate::runtime_state::*;
 
 fn runtime_state_json(state: &SharedRadBleState) -> Value {
     let state = read_state(state);
     json!({
         "v": 1,
         "state": state.phase,
+        "status": state.status,
+        "errorCode": state.error_code,
+        "elapsedSeconds": state.elapsed_seconds,
+        "controlsEnabled": state.phase == "connected",
         "buttplug": {
             "candidateCount": state.candidate_count,
             "selectedIndex": state.selected_index,
@@ -218,6 +70,10 @@ fn runtime_state_summary_json(state: &SharedRadBleState) -> Value {
     json!({
         "v": 1,
         "state": state.phase,
+        "status": state.status,
+        "errorCode": state.error_code,
+        "elapsedSeconds": state.elapsed_seconds,
+        "controlsEnabled": state.phase == "connected",
         "buttplug": {
             "candidateCount": state.candidate_count,
             "selectedIndex": state.selected_index,

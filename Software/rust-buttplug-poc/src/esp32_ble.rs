@@ -12,7 +12,8 @@ use buttplug_server_device_config::{
     BluetoothLESpecifier, DeviceConfigurationManager, Endpoint, ProtocolCommunicationSpecifier,
 };
 use esp32_nimble::{
-    BLEAddress, BLEAddressType, BLEClient, BLEDevice, BLERemoteCharacteristic, BLEScan,
+    BLEAddress, BLEAddressType, BLEClient, BLEDevice, BLEError, BLERemoteCharacteristic, BLEScan,
+    enums::{AuthReq, PairKeyDist, SecurityIOCap},
     utilities::BleUuid,
 };
 use futures::{FutureExt, future, future::BoxFuture};
@@ -32,6 +33,7 @@ use uuid::Uuid;
 use crate::rad_ble::{RadBleControlEvent, SharedRadBleState};
 
 const SCAN_SLICE_MS: i32 = 500;
+const SCAN_DURATION: Duration = Duration::from_secs(2);
 const BLE_WORKER_STACK_BYTES: usize = 16 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -76,10 +78,15 @@ struct Advertisement {
 enum BleWorkerCommand {
     StartScanning,
     StopScanning,
+    DisconnectAll {
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     ApproveCandidate {
         address_string: String,
+        generation: u32,
     },
     Connect {
+        generation: u32,
         address: Esp32BleAddress,
         address_string: String,
         events: broadcast::Sender<HardwareEvent>,
@@ -123,6 +130,8 @@ struct ConnectedDevice {
     // callback API. Keep the object boxed so moving this wrapper cannot
     // invalidate that address.
     client: Box<BLEClient>,
+    generation: u32,
+    current_generation: Arc<AtomicU32>,
     address: String,
     events: broadcast::Sender<HardwareEvent>,
     endpoints: HashMap<Endpoint, BLERemoteCharacteristic>,
@@ -133,24 +142,73 @@ struct ConnectedDevice {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Esp32BleCandidate {
     pub name: String,
+    pub display_name: String,
     pub address: String,
     pub protocols: Vec<String>,
     pub advertised_services: Vec<Uuid>,
     pub manufacturer_ids: Vec<u16>,
 }
 
+#[derive(Clone, Debug)]
+pub struct DiscoverySnapshot {
+    pub candidates: Vec<Esp32BleCandidate>,
+    pub complete: bool,
+}
+
 #[derive(Clone)]
 pub struct Esp32BleCandidateApprover {
+    state: SharedRadBleState,
     commands: Sender<BleWorkerCommand>,
+    current_generation: Arc<AtomicU32>,
+    live_generation: Arc<AtomicU32>,
+    scanning: Arc<AtomicBool>,
+    discovery_allowed: Arc<AtomicBool>,
 }
 
 impl Esp32BleCandidateApprover {
-    pub fn approve(&self, address: &str) -> Result<(), String> {
+    pub fn approve(&self, address: &str) -> Result<u32, String> {
+        self.pause_scan();
+        let generation = self
+            .current_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
+        crate::rad_ble::with_state(&self.state, |state| {
+            state.connection_generation = generation;
+        });
         self.commands
             .send(BleWorkerCommand::ApproveCandidate {
                 address_string: address.to_owned(),
+                generation,
             })
-            .map_err(|_| "RADR ESP32 BLE worker is no longer running".to_owned())
+            .map_err(|_| "RADR ESP32 BLE worker is no longer running".to_owned())?;
+        Ok(generation)
+    }
+
+    pub fn has_live_connection(&self, generation: u32) -> bool {
+        generation != 0
+            && self.live_generation.load(Ordering::Acquire) == generation
+            && self.current_generation.load(Ordering::Acquire) == generation
+    }
+
+    pub fn allow_scan(&self) {
+        self.discovery_allowed.store(true, Ordering::Release);
+    }
+
+    pub fn pause_scan(&self) {
+        self.discovery_allowed.store(false, Ordering::Release);
+        self.scanning.store(false, Ordering::Release);
+    }
+
+    /// Invalidate queued connectors and writes immediately, before worker cleanup runs.
+    pub fn cancel(&self) -> oneshot::Receiver<Result<(), String>> {
+        self.current_generation.fetch_add(1, Ordering::AcqRel);
+        self.live_generation.store(0, Ordering::Release);
+        self.pause_scan();
+        let (reply, receiver) = oneshot::channel();
+        let _ = self
+            .commands
+            .send(BleWorkerCommand::DisconnectAll { reply });
+        receiver
     }
 }
 
@@ -158,23 +216,41 @@ impl Esp32BleCandidateApprover {
 struct BleWorkerHandle {
     commands: Sender<BleWorkerCommand>,
     scanning: Arc<AtomicBool>,
+    discovery_allowed: Arc<AtomicBool>,
     available: Arc<AtomicBool>,
+    current_generation: Arc<AtomicU32>,
+    generation: u32,
+    state: SharedRadBleState,
 }
 
 struct BleWorkerContext {
+    current_generation: Arc<AtomicU32>,
+    live_generation: Arc<AtomicU32>,
     command_sender: Sender<BleWorkerCommand>,
     event_sender: tokio_mpsc::Sender<HardwareCommunicationManagerEvent>,
     scanning: Arc<AtomicBool>,
+    discovery_allowed: Arc<AtomicBool>,
     available: Arc<AtomicBool>,
     device_configuration: Arc<DeviceConfigurationManager>,
     implemented_protocols: Arc<HashSet<String>>,
-    candidate_sender: tokio_mpsc::UnboundedSender<Esp32BleCandidate>,
+    candidate_sender: tokio_mpsc::UnboundedSender<DiscoverySnapshot>,
     rad_ble_controls: tokio_mpsc::Sender<RadBleControlEvent>,
     rad_ble_state: SharedRadBleState,
 }
 
 impl BleWorkerHandle {
     fn send(&self, command: BleWorkerCommand) -> Result<(), ButtplugDeviceError> {
+        if !matches!(
+            command,
+            BleWorkerCommand::StartScanning
+                | BleWorkerCommand::StopScanning
+                | BleWorkerCommand::Disconnect { .. }
+        ) && self.generation != self.current_generation.load(Ordering::Acquire)
+        {
+            return Err(ButtplugDeviceError::DeviceConnectionError(
+                "connection attempt cancelled".to_owned(),
+            ));
+        }
         self.commands.send(command).map_err(|_| {
             ButtplugDeviceError::DeviceConnectionError(
                 "RADR ESP32 BLE worker is no longer running".to_owned(),
@@ -184,9 +260,13 @@ impl BleWorkerHandle {
 }
 
 pub struct Esp32BleCommunicationManagerBuilder {
+    current_generation: Arc<AtomicU32>,
+    live_generation: Arc<AtomicU32>,
+    scanning: Arc<AtomicBool>,
+    discovery_allowed: Arc<AtomicBool>,
     device_configuration: Arc<DeviceConfigurationManager>,
     implemented_protocols: Arc<HashSet<String>>,
-    candidate_sender: tokio_mpsc::UnboundedSender<Esp32BleCandidate>,
+    candidate_sender: tokio_mpsc::UnboundedSender<DiscoverySnapshot>,
     rad_ble_controls: tokio_mpsc::Sender<RadBleControlEvent>,
     rad_ble_state: SharedRadBleState,
     commands: Sender<BleWorkerCommand>,
@@ -197,16 +277,29 @@ impl Esp32BleCommunicationManagerBuilder {
     pub fn new(
         device_configuration: Arc<DeviceConfigurationManager>,
         implemented_protocols: Arc<HashSet<String>>,
-        candidate_sender: tokio_mpsc::UnboundedSender<Esp32BleCandidate>,
+        candidate_sender: tokio_mpsc::UnboundedSender<DiscoverySnapshot>,
         rad_ble_controls: tokio_mpsc::Sender<RadBleControlEvent>,
         rad_ble_state: SharedRadBleState,
     ) -> (Self, Esp32BleCandidateApprover) {
         let (commands, command_receiver) = mpsc::channel();
+        let current_generation = Arc::new(AtomicU32::new(0));
+        let live_generation = Arc::new(AtomicU32::new(0));
+        let scanning = Arc::new(AtomicBool::new(false));
+        let discovery_allowed = Arc::new(AtomicBool::new(true));
         let approver = Esp32BleCandidateApprover {
+            state: rad_ble_state.clone(),
+            live_generation: live_generation.clone(),
+            current_generation: current_generation.clone(),
+            scanning: scanning.clone(),
+            discovery_allowed: discovery_allowed.clone(),
             commands: commands.clone(),
         };
         (
             Self {
+                live_generation,
+                current_generation,
+                scanning,
+                discovery_allowed,
                 device_configuration,
                 implemented_protocols,
                 candidate_sender,
@@ -230,7 +323,14 @@ impl HardwareCommunicationManagerBuilder for Esp32BleCommunicationManagerBuilder
             .command_receiver
             .take()
             .expect("ESP32 BLE communication manager builder can only be finished once");
-        let scanning = Arc::new(AtomicBool::new(false));
+        let scanning = self.scanning.clone();
+        let discovery_allowed = self.discovery_allowed.clone();
+        let discovery_for_worker = discovery_allowed.clone();
+        let current_generation = self.current_generation.clone();
+        let generation_for_worker = current_generation.clone();
+        let live_generation = self.live_generation.clone();
+        let live_for_worker = live_generation.clone();
+        let state_for_handle = self.rad_ble_state.clone();
         let available = Arc::new(AtomicBool::new(false));
         let scanning_for_worker = scanning.clone();
         let available_for_worker = available.clone();
@@ -247,9 +347,12 @@ impl HardwareCommunicationManagerBuilder for Esp32BleCommunicationManagerBuilder
                 run_ble_worker(
                     command_receiver,
                     BleWorkerContext {
+                        current_generation: generation_for_worker,
+                        live_generation: live_for_worker,
                         command_sender: command_sender_for_worker,
                         event_sender,
                         scanning: scanning_for_worker,
+                        discovery_allowed: discovery_for_worker,
                         available: available_for_worker,
                         device_configuration,
                         implemented_protocols,
@@ -269,7 +372,11 @@ impl HardwareCommunicationManagerBuilder for Esp32BleCommunicationManagerBuilder
         Box::new(Esp32BleCommunicationManager {
             worker: BleWorkerHandle {
                 commands: command_sender,
+                current_generation,
+                generation: 0,
+                state: state_for_handle,
                 scanning,
+                discovery_allowed,
                 available,
             },
         })
@@ -286,6 +393,9 @@ impl HardwareCommunicationManager for Esp32BleCommunicationManager {
     }
 
     fn start_scanning(&mut self) -> ButtplugResultFuture {
+        if !self.worker.discovery_allowed.load(Ordering::Acquire) {
+            return future::ready(Ok(())).boxed();
+        }
         self.worker.scanning.store(true, Ordering::Release);
         let result = self.worker.send(BleWorkerCommand::StartScanning);
         if let Err(error) = result {
@@ -340,16 +450,33 @@ impl HardwareConnector for Esp32BleConnector {
     }
 
     async fn connect(&mut self) -> Result<Box<dyn HardwareSpecializer>, ButtplugDeviceError> {
+        progress(
+            &self.worker.state,
+            self.worker.generation,
+            "Opening Bluetooth link",
+        );
         let (event_sender, _) = broadcast::channel(256);
         let (reply_sender, reply_receiver) = oneshot::channel();
         self.worker.send(BleWorkerCommand::Connect {
+            generation: self.worker.generation,
             address: self.advertisement.address,
             address_string: self.advertisement.address_string.clone(),
             events: event_sender.clone(),
             reply: reply_sender,
         })?;
 
-        let session_id = receive_worker_reply(reply_receiver, "connect").await?;
+        let session_id = match receive_worker_reply(reply_receiver, "connect").await {
+            Ok(id) => id,
+            Err(error) => {
+                crate::rad_ble::with_state(&self.worker.state, |state| {
+                    if state.connection_generation == self.worker.generation {
+                        state.error_code = Some("E201".to_owned());
+                        state.last_error = Some(error.to_string());
+                    }
+                });
+                return Err(error);
+            }
+        };
         Ok(Box::new(Esp32BleSpecializer {
             worker: self.worker.clone(),
             session_id: Some(session_id),
@@ -371,6 +498,11 @@ struct Esp32BleSpecializer {
 impl Drop for Esp32BleSpecializer {
     fn drop(&mut self) {
         if let Some(session_id) = self.session_id.take() {
+            setup_error(
+                &self.worker,
+                "E206",
+                "No compatible Bluetooth services were found",
+            );
             queue_disconnect(&self.worker, session_id);
         }
     }
@@ -419,7 +551,17 @@ impl HardwareSpecializer for Esp32BleSpecializer {
             services,
             reply: reply_sender,
         })?;
+        progress(
+            &self.worker.state,
+            self.worker.generation,
+            "Finding device services",
+        );
         let endpoints = receive_worker_reply(reply_receiver, "specialize").await?;
+        progress(
+            &self.worker.state,
+            self.worker.generation,
+            "Identifying device and loading controls",
+        );
         self.session_id = None;
 
         Ok(Hardware::new(
@@ -448,6 +590,11 @@ struct Esp32BleHardware {
 impl Drop for Esp32BleHardware {
     fn drop(&mut self) {
         if !self.disconnect_requested.swap(true, Ordering::AcqRel) {
+            setup_error(
+                &self.worker,
+                "E204",
+                "The device did not complete protocol setup",
+            );
             queue_disconnect(&self.worker, self.session_id);
         }
     }
@@ -584,9 +731,12 @@ async fn receive_worker_reply<T>(
 
 fn run_ble_worker(commands: Receiver<BleWorkerCommand>, context: BleWorkerContext) {
     let BleWorkerContext {
+        current_generation,
+        live_generation,
         command_sender,
         event_sender,
         scanning,
+        discovery_allowed,
         available,
         device_configuration,
         implemented_protocols,
@@ -598,7 +748,14 @@ fn run_ble_worker(commands: Receiver<BleWorkerCommand>, context: BleWorkerContex
     if let Err(error) = ble_device.set_preferred_mtu(512) {
         log::warn!("Could not set preferred BLE MTU: {error:?}");
     }
-    if let Err(error) = crate::rad_ble::install(ble_device, rad_ble_controls, rad_ble_state) {
+    ble_device
+        .security()
+        .set_auth(AuthReq::Bond | AuthReq::Sc)
+        .set_io_cap(SecurityIOCap::NoInputNoOutput)
+        .set_security_init_key(PairKeyDist::ENC | PairKeyDist::ID)
+        .set_security_resp_key(PairKeyDist::ENC | PairKeyDist::ID);
+    if let Err(error) = crate::rad_ble::install(ble_device, rad_ble_controls, rad_ble_state.clone())
+    {
         log::error!("Could not initialize Rust RAD BLE v1: {error}");
     }
     available.store(true, Ordering::Release);
@@ -612,6 +769,16 @@ fn run_ble_worker(commands: Receiver<BleWorkerCommand>, context: BleWorkerContex
     let mut retired_clients = Vec::<(Instant, Box<BLEClient>)>::new();
     let next_session_id = AtomicU32::new(1);
     let configured_manufacturer_ids = configured_manufacturer_ids(&device_configuration);
+    let catalog_names: Vec<_> = device_configuration
+        .base_device_definitions()
+        .iter()
+        .map(|(id, definition)| crate::device_names::CatalogName {
+            protocol: id.protocol().clone(),
+            identifier: id.identifier().clone(),
+            name: definition.name().clone(),
+        })
+        .collect();
+    let mut scan_started = Instant::now();
 
     loop {
         loop {
@@ -620,11 +787,19 @@ fn run_ble_worker(commands: Receiver<BleWorkerCommand>, context: BleWorkerContex
                     if matches!(&command, BleWorkerCommand::StartScanning) {
                         seen.clear();
                         candidate_snapshots.clear();
-                        pending_candidates.clear();
-                        reported_addresses.clear();
+                        scan_started = Instant::now();
                     }
                     match command {
-                        BleWorkerCommand::ApproveCandidate { address_string } => {
+                        BleWorkerCommand::ApproveCandidate {
+                            address_string,
+                            generation,
+                        } => {
+                            if generation != current_generation.load(Ordering::Acquire) {
+                                continue;
+                            }
+                            scanning.store(false, Ordering::Release);
+                            // Re-approval reconnects only the explicitly selected cached address.
+                            reported_addresses.remove(&address_string);
                             approve_candidate(
                                 &address_string,
                                 &pending_candidates,
@@ -632,7 +807,11 @@ fn run_ble_worker(commands: Receiver<BleWorkerCommand>, context: BleWorkerContex
                                 &event_sender,
                                 BleWorkerHandle {
                                     commands: command_sender.clone(),
+                                    current_generation: current_generation.clone(),
+                                    generation,
+                                    state: rad_ble_state.clone(),
                                     scanning: scanning.clone(),
+                                    discovery_allowed: discovery_allowed.clone(),
                                     available: available.clone(),
                                 },
                             );
@@ -641,11 +820,11 @@ fn run_ble_worker(commands: Receiver<BleWorkerCommand>, context: BleWorkerContex
                             handle_worker_command(
                                 command,
                                 ble_device,
-                                &mut seen,
-                                &mut reported_addresses,
                                 &mut connections,
                                 &mut retired_clients,
                                 &next_session_id,
+                                &current_generation,
+                                &live_generation,
                             );
                         }
                     }
@@ -681,7 +860,7 @@ fn run_ble_worker(commands: Receiver<BleWorkerCommand>, context: BleWorkerContex
         }
         retired_clients.retain(|(retired_at, _)| retired_at.elapsed() < Duration::from_secs(2));
 
-        if !scanning.load(Ordering::Acquire) {
+        if !scanning.load(Ordering::Acquire) || !discovery_allowed.load(Ordering::Acquire) {
             std::thread::sleep(Duration::from_millis(20));
             continue;
         }
@@ -755,6 +934,7 @@ fn run_ble_worker(commands: Receiver<BleWorkerCommand>, context: BleWorkerContex
                 let matching_protocols =
                     matching_protocols(&device_configuration, &implemented_protocols, &specifier);
                 if matching_protocols.is_empty() {
+                    candidate_snapshots.remove(&address_string);
                     pending_candidates.remove(&address_string);
                     return None;
                 }
@@ -765,6 +945,11 @@ fn run_ble_worker(commands: Receiver<BleWorkerCommand>, context: BleWorkerContex
                     advertisement.manufacturer_data.keys().copied().collect();
                 manufacturer_ids.sort_unstable();
                 let candidate = Esp32BleCandidate {
+                    display_name: crate::device_names::friendly_name(
+                        &advertisement.name,
+                        &matching_protocols,
+                        &catalog_names,
+                    ),
                     name: advertisement.name.clone(),
                     address: address_string.clone(),
                     protocols: matching_protocols,
@@ -773,25 +958,35 @@ fn run_ble_worker(commands: Receiver<BleWorkerCommand>, context: BleWorkerContex
                 };
 
                 pending_candidates.insert(address_string.clone(), advertisement);
-                if candidate_snapshots.get(&address_string) != Some(&candidate) {
-                    match candidate_sender.send(candidate.clone()) {
-                        Ok(()) => {
-                            candidate_snapshots.insert(address_string, candidate);
-                        }
-                        Err(_) => {
-                            log::warn!(
-                                "Could not enqueue a supported ESP32 BLE candidate because the RADR receiver closed"
-                            );
-                        }
-                    }
-                }
+                candidate_snapshots.insert(address_string, candidate);
                 None
             })
             .await
         });
 
+        let complete = scan_started.elapsed() >= SCAN_DURATION;
+        if scanning.load(Ordering::Acquire) && discovery_allowed.load(Ordering::Acquire) {
+            let mut candidates: Vec<_> = candidate_snapshots.values().cloned().collect();
+            candidates.sort_by(|a, b| a.address.cmp(&b.address));
+            let _ = candidate_sender.send(DiscoverySnapshot {
+                candidates,
+                complete,
+            });
+            if complete {
+                scanning.store(false, Ordering::Release);
+                pending_candidates.retain(|address, _| candidate_snapshots.contains_key(address));
+                let _ = event_sender.try_send(HardwareCommunicationManagerEvent::ScanningFinished);
+            }
+        }
+
         if let Err(error) = scan_result {
             log::error!("ESP32 BLE scan failed: {error:?}");
+            crate::rad_ble::with_state(&rad_ble_state, |state| {
+                if state.phase == "searching" {
+                    state.error_code = Some("E101".to_owned());
+                    state.last_error = Some(format!("{error:?}"));
+                }
+            });
             scanning.store(false, Ordering::Release);
             let _ = event_sender.try_send(HardwareCommunicationManagerEvent::ScanningFinished);
         }
@@ -811,10 +1006,18 @@ fn approve_candidate(
     }
 
     let Some(advertisement) = pending_candidates.get(address).cloned() else {
+        crate::rad_ble::with_state(&worker.state, |state| {
+            if state.connection_generation == worker.generation {
+                state.error_code = Some("E202".to_owned());
+                state.last_error = Some("Device is no longer available. Search again.".to_owned());
+            }
+        });
         log::warn!("Cannot approve unknown or no-longer-supported BLE candidate {address}");
         return;
     };
     let name = advertisement.name.clone();
+    let state = worker.state.clone();
+    let generation = worker.generation;
     let connector = Esp32BleConnector {
         advertisement,
         worker,
@@ -829,7 +1032,12 @@ fn approve_candidate(
             log::info!("Approved BLE candidate {address} for Buttplug connection");
         }
         Err(_) => {
-            log::warn!("Could not enqueue approved ESP32 BLE candidate for Buttplug");
+            crate::rad_ble::with_state(&state, |state| {
+                if state.connection_generation == generation {
+                    state.error_code = Some("E202".to_owned());
+                    state.last_error = Some("Connection queue is busy. Retry.".to_owned());
+                }
+            });
         }
     }
 }
@@ -901,31 +1109,66 @@ fn nimble_uuid_to_uuid(value: BleUuid) -> Uuid {
 fn handle_worker_command(
     command: BleWorkerCommand,
     ble_device: &BLEDevice,
-    seen: &mut HashMap<String, Advertisement>,
-    reported_addresses: &mut HashSet<String>,
     connections: &mut HashMap<u32, ConnectedDevice>,
     retired_clients: &mut Vec<(Instant, Box<BLEClient>)>,
     next_session_id: &AtomicU32,
+    current_generation: &Arc<AtomicU32>,
+    live_generation: &Arc<AtomicU32>,
 ) {
     match command {
-        BleWorkerCommand::StartScanning => seen.clear(),
+        BleWorkerCommand::StartScanning => {}
         BleWorkerCommand::StopScanning => {}
+        BleWorkerCommand::DisconnectAll { reply } => {
+            let mut result = Ok(());
+            for connection in connections.values_mut() {
+                if connection.client.connected()
+                    && let Err(error) = connection.client.disconnect()
+                {
+                    result = Err(format!("{error:?}"));
+                }
+            }
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while connections
+                .values()
+                .any(|connection| connection.client.connected())
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            if connections
+                .values()
+                .any(|connection| connection.client.connected())
+            {
+                result = Err("Bluetooth disconnect timed out".to_owned());
+            }
+            let _ = reply.send(result);
+        }
         BleWorkerCommand::ApproveCandidate { .. } => {
             unreachable!("approval commands are handled by the BLE worker loop")
         }
         BleWorkerCommand::Connect {
+            generation,
             address,
             address_string,
             events,
             reply,
         } => {
-            let reported_address = address_string.clone();
             let result = esp_idf_svc::hal::task::block_on(async {
+                if generation != current_generation.load(Ordering::Acquire) {
+                    return Err("connection cancelled".to_owned());
+                }
                 let address = address.to_nimble()?;
                 let mut client = Box::new(ble_device.new_client());
                 let disconnect_events = events.clone();
                 let disconnect_address = address_string.clone();
+                let live_on_disconnect = live_generation.clone();
                 client.on_disconnect(move |_| {
+                    let _ = live_on_disconnect.compare_exchange(
+                        generation,
+                        0,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    );
                     let _ = disconnect_events
                         .send(HardwareEvent::Disconnected(disconnect_address.clone()));
                 });
@@ -934,11 +1177,19 @@ fn handle_worker_command(
                     return Err(format!("{error:?}"));
                 }
 
+                if generation != current_generation.load(Ordering::Acquire) {
+                    let _ = client.disconnect();
+                    retired_clients.push((Instant::now(), client));
+                    return Err("connection cancelled".to_owned());
+                }
+                live_generation.store(generation, Ordering::Release);
                 let session_id = next_session_id.fetch_add(1, Ordering::Relaxed);
                 connections.insert(
                     session_id,
                     ConnectedDevice {
                         client,
+                        generation,
+                        current_generation: current_generation.clone(),
                         address: address_string,
                         events,
                         endpoints: HashMap::new(),
@@ -948,9 +1199,6 @@ fn handle_worker_command(
                 );
                 Ok(session_id)
             });
-            if result.is_err() {
-                reported_addresses.remove(&reported_address);
-            }
             log_worker_memory("connect");
             let _ = reply.send(result);
         }
@@ -963,6 +1211,9 @@ fn handle_worker_command(
                 let connection = connection_mut(connections, session_id)?;
                 let mut endpoints = HashMap::new();
                 for (service_uuid, characteristic_map) in services {
+                    if connection.generation != current_generation.load(Ordering::Acquire) {
+                        return Err("connection cancelled".to_owned());
+                    }
                     let Ok(service) = connection
                         .client
                         .get_service(BleUuid::from(service_uuid))
@@ -971,6 +1222,9 @@ fn handle_worker_command(
                         continue;
                     };
                     for (endpoint, characteristic_uuid) in characteristic_map {
+                        if connection.generation != current_generation.load(Ordering::Acquire) {
+                            return Err("connection cancelled".to_owned());
+                        }
                         if let Ok(characteristic) = service
                             .get_characteristic(BleUuid::from(characteristic_uuid))
                             .await
@@ -995,11 +1249,12 @@ fn handle_worker_command(
             reply,
         } => {
             let result = esp_idf_svc::hal::task::block_on(async {
-                let characteristic = characteristic_mut(connections, session_id, endpoint)?;
-                characteristic
-                    .read_value()
-                    .await
-                    .map_err(|error| format!("{error:?}"))
+                gatt_operation(
+                    connection_mut(connections, session_id)?,
+                    endpoint,
+                    GattOperation::Read,
+                )
+                .await
             });
             let _ = reply.send(result);
         }
@@ -1012,31 +1267,19 @@ fn handle_worker_command(
         } => {
             let result = esp_idf_svc::hal::task::block_on(async {
                 let characteristic = characteristic_mut(connections, session_id, endpoint)?;
-                let response = if with_response {
-                    if characteristic.can_write() {
-                        true
-                    } else if characteristic.can_write_no_response() {
-                        log::warn!(
-                            "BLE endpoint {endpoint} lacks write-with-response; falling back to write-without-response"
-                        );
-                        false
-                    } else {
-                        return Err(format!("endpoint {endpoint} is not writable"));
-                    }
-                } else if characteristic.can_write_no_response() {
-                    false
-                } else if characteristic.can_write() {
-                    log::warn!(
-                        "BLE endpoint {endpoint} lacks write-without-response; falling back to write-with-response"
-                    );
-                    true
-                } else {
-                    return Err(format!("endpoint {endpoint} is not writable"));
-                };
-                characteristic
-                    .write_value(&data, response)
-                    .await
-                    .map_err(|error| format!("{error:?}"))
+                let response = crate::ble_policy::write_response(
+                    with_response,
+                    characteristic.can_write(),
+                    characteristic.can_write_no_response(),
+                )
+                .ok_or_else(|| format!("endpoint {endpoint} is not writable"))?;
+                gatt_operation(
+                    connection_mut(connections, session_id)?,
+                    endpoint,
+                    GattOperation::Write { data, response },
+                )
+                .await
+                .map(|_| ())
             });
             let _ = reply.send(result);
         }
@@ -1080,20 +1323,14 @@ fn handle_worker_command(
                         first_notification = false;
                     }
                 });
-                let subscribe_result = if characteristic.can_notify() {
-                    characteristic
-                        .subscribe_notify(true)
-                        .await
-                        .map_err(|error| format!("{error:?}"))
+                let operation = if characteristic.can_notify() {
+                    GattOperation::Subscribe { indicate: false }
                 } else if characteristic.can_indicate() {
-                    characteristic
-                        .subscribe_indicate(true)
-                        .await
-                        .map_err(|error| format!("{error:?}"))
+                    GattOperation::Subscribe { indicate: true }
                 } else {
-                    Err(format!("endpoint {endpoint} cannot notify or indicate"))
+                    return Err(format!("endpoint {endpoint} cannot notify or indicate"));
                 };
-                subscribe_result?;
+                gatt_operation(connection, endpoint, operation).await?;
                 connection.subscribed_endpoints.insert(endpoint);
                 Ok(())
             });
@@ -1109,26 +1346,22 @@ fn handle_worker_command(
                 if !connection.subscribed_endpoints.contains(&endpoint) {
                     return Ok(());
                 }
-                let characteristic = connection
-                    .endpoints
-                    .get_mut(&endpoint)
-                    .ok_or_else(|| format!("endpoint {endpoint} was not specialized"))?;
-                characteristic
-                    .unsubscribe(true)
-                    .await
-                    .map_err(|error| format!("{error:?}"))?;
+                gatt_operation(connection, endpoint, GattOperation::Unsubscribe).await?;
                 connection.subscribed_endpoints.remove(&endpoint);
                 Ok(())
             });
             let _ = reply.send(result);
         }
         BleWorkerCommand::Disconnect { session_id, reply } => {
-            let result = connection_mut(connections, session_id).and_then(|connection| {
-                connection
-                    .client
-                    .disconnect()
-                    .map_err(|error| format!("{error:?}"))
-            });
+            let result = connections
+                .get_mut(&session_id)
+                .ok_or_else(|| "BLE session already closed".to_owned())
+                .and_then(|connection| {
+                    connection
+                        .client
+                        .disconnect()
+                        .map_err(|error| format!("{error:?}"))
+                });
             let _ = reply.send(result);
         }
     }
@@ -1153,6 +1386,10 @@ fn connection_mut(
 ) -> Result<&mut ConnectedDevice, String> {
     connections
         .get_mut(&session_id)
+        .filter(|connection| {
+            connection.generation == connection.current_generation.load(Ordering::Acquire)
+                && connection.client.connected()
+        })
         .ok_or_else(|| format!("BLE session {session_id} is not connected"))
 }
 
@@ -1165,4 +1402,93 @@ fn characteristic_mut(
         .endpoints
         .get_mut(&endpoint)
         .ok_or_else(|| format!("endpoint {endpoint} was not specialized"))
+}
+
+fn progress(state: &SharedRadBleState, generation: u32, message: &str) {
+    crate::rad_ble::with_state(state, |state| {
+        if state.connection_generation == generation
+            && matches!(state.phase.as_str(), "connecting" | "reconnecting")
+        {
+            state.status = message.to_owned();
+        }
+    });
+}
+
+enum GattOperation {
+    Read,
+    Write { data: Vec<u8>, response: bool },
+    Subscribe { indicate: bool },
+    Unsubscribe,
+}
+
+async fn perform_gatt(
+    characteristic: &mut BLERemoteCharacteristic,
+    operation: &GattOperation,
+) -> Result<Vec<u8>, BLEError> {
+    match operation {
+        GattOperation::Read => return characteristic.read_value().await,
+        GattOperation::Write { data, response } => {
+            characteristic.write_value(data, *response).await?
+        }
+        GattOperation::Subscribe { indicate: true } => {
+            characteristic.subscribe_indicate(true).await?
+        }
+        GattOperation::Subscribe { indicate: false } => {
+            characteristic.subscribe_notify(true).await?
+        }
+        GattOperation::Unsubscribe => characteristic.unsubscribe(true).await?,
+    }
+    Ok(Vec::new())
+}
+
+async fn gatt_operation(
+    connection: &mut ConnectedDevice,
+    endpoint: Endpoint,
+    operation: GattOperation,
+) -> Result<Vec<u8>, String> {
+    let characteristic = connection
+        .endpoints
+        .get_mut(&endpoint)
+        .ok_or_else(|| format!("endpoint {endpoint} was not specialized"))?;
+    let result = perform_gatt(characteristic, &operation).await;
+    if result
+        .as_ref()
+        .is_err_and(|error| crate::ble_policy::needs_pairing(error.code()))
+    {
+        if connection.generation != connection.current_generation.load(Ordering::Acquire) {
+            return Err("connection cancelled before pairing".to_owned());
+        }
+        log::info!("Device requires Bluetooth security; pairing and retrying rejected operation");
+        connection
+            .client
+            .secure_connection()
+            .await
+            .map_err(|error| format!("BLE pairing failed: {error:?}"))?;
+        if connection.generation != connection.current_generation.load(Ordering::Acquire) {
+            return Err("connection cancelled during pairing".to_owned());
+        }
+        // One retry, only after an explicit authentication/encryption rejection.
+        let characteristic = connection
+            .endpoints
+            .get_mut(&endpoint)
+            .ok_or_else(|| format!("endpoint {endpoint} was not specialized"))?;
+        return perform_gatt(characteristic, &operation)
+            .await
+            .map_err(|error| format!("{error:?}"));
+    }
+    result.map_err(|error| format!("{error:?}"))
+}
+
+fn setup_error(worker: &BleWorkerHandle, code: &str, detail: &str) {
+    if worker.generation != worker.current_generation.load(Ordering::Acquire) {
+        return;
+    }
+    crate::rad_ble::with_state(&worker.state, |state| {
+        if state.connection_generation == worker.generation
+            && matches!(state.phase.as_str(), "connecting" | "reconnecting")
+        {
+            state.error_code = Some(code.to_owned());
+            state.last_error = Some(detail.to_owned());
+        }
+    });
 }

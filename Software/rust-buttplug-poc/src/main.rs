@@ -1,10 +1,7 @@
+mod ble_policy;
 use anyhow::Context;
-use buttplug_client::{
-    ButtplugClient, ButtplugClientDevice, ButtplugClientEvent,
-    device::{ClientDeviceCommandValue, ClientDeviceFeature, ClientDeviceOutputCommand},
-};
+use buttplug_client::ButtplugClient;
 use buttplug_client_in_process::ButtplugInProcessClientConnectorBuilder;
-use buttplug_core::message::OutputType;
 use buttplug_server::{
     ButtplugServerBuilder,
     device::{ServerDeviceManagerBuilder, get_default_protocol_map},
@@ -24,17 +21,21 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use strum::IntoEnumIterator;
 
+mod controller;
+mod controls;
+mod device_names;
 mod esp32_ble;
+mod flow;
 mod psram_allocator;
 mod rad_ble;
 mod radr_display;
+mod runtime_state;
+mod screen;
+mod ui;
 
-use esp32_ble::{Esp32BleCandidate, Esp32BleCommunicationManagerBuilder};
-use rad_ble::{
-    RadBleCandidateSummary, RadBleControlEvent, RadBleControlSetting, SharedRadBleState,
-};
+use esp32_ble::Esp32BleCommunicationManagerBuilder;
+use rad_ble::RadBleControlEvent;
 
 const UPSTREAM_BUTTPLUG_REVISION: &str = "9571b3db42ee2d7b3342ab9d40eb5c9e45679444";
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(40);
@@ -143,206 +144,10 @@ impl<'d> QuadratureEncoder<'d> {
     }
 }
 
-#[derive(Clone)]
-struct ActiveOutputControl {
-    feature: ClientDeviceFeature,
-    output_type: OutputType,
-    label: String,
-    value_percent: u8,
-}
-
-fn output_controls(device: &ButtplugClientDevice) -> Vec<ActiveOutputControl> {
-    let mut controls = Vec::new();
-    for feature in device.device_features().values() {
-        for output_type in OutputType::iter() {
-            if !feature.feature().contains_output(output_type) {
-                continue;
-            }
-            let output_name = output_type.to_string();
-            let description = feature.feature().description().trim();
-            let label = if description.is_empty() {
-                format!("Feature {} · {output_name}", feature.feature_index() + 1)
-            } else {
-                format!("{description} · {output_name}")
-            };
-            controls.push(ActiveOutputControl {
-                feature: feature.clone(),
-                output_type,
-                label,
-                value_percent: 0,
-            });
-        }
-    }
-    controls
-}
-
-fn publish_controls(state: &SharedRadBleState, controls: &[ActiveOutputControl], selected: usize) {
-    rad_ble::with_state(state, |state| {
-        state.selected_control_index = controls.get(selected).map(|_| selected);
-        state.controls = controls
-            .iter()
-            .map(|control| RadBleControlSetting {
-                feature_index: control.feature.feature_index(),
-                label: control.label.clone(),
-                output_type: control.output_type.to_string(),
-                value_percent: control.value_percent,
-            })
-            .collect();
-        state.control_revision = state.control_revision.wrapping_add(1);
-    });
-}
-
-fn select_control(
-    state: &SharedRadBleState,
-    controls: &[ActiveOutputControl],
-    selected: &mut usize,
-    delta: i32,
-) {
-    if controls.is_empty() {
-        return;
-    }
-    *selected = ((*selected as i32 + delta).rem_euclid(controls.len() as i32)) as usize;
-    publish_controls(state, controls, *selected);
-    log::info!(
-        "Selected upstream control {} of {}: {}",
-        *selected + 1,
-        controls.len(),
-        controls[*selected].label
-    );
-}
-
-async fn adjust_control(
-    state: &SharedRadBleState,
-    controls: &mut [ActiveOutputControl],
-    selected: usize,
-    delta: i32,
-) {
-    let Some(control) = controls.get(selected) else {
-        return;
-    };
-    let value_percent = (i32::from(control.value_percent) + delta).clamp(0, 100) as u8;
-    if value_percent == control.value_percent {
-        return;
-    }
-    let feature = control.feature.clone();
-    let output_type = control.output_type;
-    let output_name = output_type.to_string();
-    let label = control.label.clone();
-    let value = ClientDeviceCommandValue::Percent(f64::from(value_percent) / 100.0);
-    let command = match output_type {
-        OutputType::HwPositionWithDuration => {
-            ClientDeviceOutputCommand::HwPositionWithDuration(value, 500)
-        }
-        output_type => match ClientDeviceOutputCommand::from_command_value(output_type, &value) {
-            Ok(command) => command,
-            Err(error) => {
-                rad_ble::with_state(state, |state| state.last_error = Some(error.to_string()));
-                return;
-            }
-        },
-    };
-    match feature.run_output(&command).await {
-        Ok(()) => {
-            if let Some(control) = controls.get_mut(selected) {
-                control.value_percent = value_percent;
-            }
-            publish_controls(state, controls, selected);
-            rad_ble::with_state(state, |state| state.last_error = None);
-            log::info!(
-                "BUTTPLUG_CONTROL feature={} output={} value={} label={:?}",
-                feature.feature_index(),
-                output_name,
-                value_percent,
-                label
-            );
-        }
-        Err(error) => {
-            log::warn!("Could not set upstream control {label:?}: {error}");
-            rad_ble::with_state(state, |state| state.last_error = Some(error.to_string()));
-        }
-    }
-}
-
-async fn stop_active_device(
-    state: &SharedRadBleState,
-    device: Option<&ButtplugClientDevice>,
-    controls: &mut [ActiveOutputControl],
-    selected: usize,
-) {
-    let Some(device) = device else { return };
-    match device.stop().await {
-        Ok(()) => {
-            for control in controls.iter_mut() {
-                control.value_percent = 0;
-            }
-            publish_controls(state, controls, selected);
-            rad_ble::with_state(state, |state| state.last_error = None);
-            log::info!("User stopped all upstream outputs on {}", device.name());
-        }
-        Err(error) => {
-            log::warn!(
-                "Could not stop upstream outputs on {}: {error}",
-                device.name()
-            );
-            rad_ble::with_state(state, |state| state.last_error = Some(error.to_string()));
-        }
-    }
-}
-
-fn log_selected_candidate(candidates: &[Esp32BleCandidate], selected: usize) {
-    if let Some(candidate) = candidates.get(selected) {
-        log::info!(
-            "Selected BLE candidate {} of {}: {:?} {} protocols={:?}",
-            selected + 1,
-            candidates.len(),
-            candidate.name,
-            candidate.address,
-            candidate.protocols
-        );
-    }
-}
-
-fn publish_selection(state: &SharedRadBleState, candidates: &[Esp32BleCandidate], selected: usize) {
-    rad_ble::with_state(state, |state| {
-        state.candidate_count = candidates.len();
-        state.candidates = candidates
-            .iter()
-            .map(|candidate| RadBleCandidateSummary {
-                name: if candidate.name.is_empty() {
-                    candidate.protocols.join(", ")
-                } else {
-                    candidate.name.clone()
-                },
-                protocols: candidate.protocols.clone(),
-            })
-            .collect();
-        state.selected_index = candidates.get(selected).map(|_| selected);
-        state.selected_name = candidates
-            .get(selected)
-            .map(|candidate| candidate.name.clone());
-        state.selected_protocols = candidates
-            .get(selected)
-            .map(|candidate| candidate.protocols.clone())
-            .unwrap_or_default();
-        if !candidates.is_empty() && state.connected_name.is_none() {
-            state.phase = "candidate".to_owned();
-        }
-    });
-}
-
-fn select_candidate(
-    state: &SharedRadBleState,
-    candidates: &[Esp32BleCandidate],
-    selected: &mut usize,
-    delta: i32,
-) {
-    if candidates.is_empty() {
-        return;
-    }
-    *selected = ((*selected as i32 + delta).rem_euclid(candidates.len() as i32)) as usize;
-    log_selected_candidate(candidates, *selected);
-    publish_selection(state, candidates, *selected);
-}
+use controls::{
+    ActiveOutputControl, output_controls, publish_controls, publish_selection, select_candidate,
+    select_control,
+};
 
 fn log_memory(stage: &str) {
     let (free, internal, external, minimum, largest, stack_headroom) = unsafe {
@@ -495,431 +300,37 @@ fn main() -> anyhow::Result<()> {
 
         let mut events = client.event_stream();
 
-        client
-            .start_scanning()
-            .await
-            .context("could not start the upstream Buttplug scan")?;
-        log::info!("Official Buttplug server, catalog, and ESP32 BLE manager initialized");
-        log::info!(
-            "Candidate approval: left/right under-screen buttons select; center connects"
-        );
-        if let Some(name) = TEST_AUTO_APPROVE_NAME {
-            log::warn!("Test-only auto-approval is enabled for BLE name {name:?}");
-        }
-
-        let mut candidates = Vec::<Esp32BleCandidate>::new();
-        let mut selected = 0_usize;
-        let mut active_device: Option<ButtplugClientDevice> = None;
-        let mut active_controls = Vec::<ActiveOutputControl>::new();
-        let mut selected_control = 0_usize;
-        let mut button_poll = tokio::time::interval(Duration::from_millis(10));
-        button_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut encoder_poll = tokio::time::interval(Duration::from_millis(10));
-        encoder_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut controller = controller::Controller::new(Arc::new(client), candidate_approver, rad_ble_state.clone());
+        let mut input_poll = tokio::time::interval(Duration::from_millis(10));
+        input_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut display_poll = tokio::time::interval(Duration::from_millis(100));
         display_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             tokio::select! {
                 event = events.next() => {
-                    let Some(event) = event else {
-                        anyhow::bail!("Official Buttplug client event stream ended unexpectedly");
-                    };
-                    match event {
-                        ButtplugClientEvent::DeviceAdded(device) => {
-                            log::info!("Buttplug device connected: {}", device.name());
-                            let mut features = Vec::new();
-                            for (index, feature) in device.device_features() {
-                                log::info!(
-                                    "Buttplug feature {index} on {}: {:?}",
-                                    device.name(),
-                                    feature.feature()
-                                );
-                                let feature_json = serde_json::json!({
-                                    "device": device.name(),
-                                    "feature_index": index,
-                                    "definition": feature.feature(),
-                                });
-                                log::info!("BUTTPLUG_FEATURE_JSON {feature_json}");
-                                features.push(feature_json);
-                            }
-                            active_controls = output_controls(&device);
-                            selected_control = 0;
-                            rad_ble::with_state(&rad_ble_state, |state| {
-                                state.phase = "connected".to_owned();
-                                state.connected_name = Some(device.name().to_owned());
-                                state.feature_count = features.len();
-                                state.features = features.clone();
-                                state.last_connected_name = Some(device.name().to_owned());
-                                state.last_feature_count = features.len();
-                                state.last_features = features;
-                                state.last_error = None;
-                            });
-                            publish_controls(
-                                &rad_ble_state,
-                                &active_controls,
-                                selected_control,
-                            );
-                            active_device = Some(device.clone());
-                            match device.stop().await {
-                                Ok(()) => log::info!(
-                                    "Sent upstream all-stop command to {} after enumeration",
-                                    device.name()
-                                ),
-                                Err(error) => log::warn!(
-                                    "Could not send upstream all-stop command to {}: {error}",
-                                    device.name()
-                                ),
-                            }
-                            log_memory("device connected, enumerated, and stopped");
-                        }
-                        ButtplugClientEvent::DeviceRemoved(device) => {
-                            log::info!("Buttplug device disconnected: {}", device.name());
-                            let removed_active = active_device
-                                .as_ref()
-                                .is_some_and(|active| active.index() == device.index());
-                            if removed_active {
-                                active_device = None;
-                                active_controls.clear();
-                                selected_control = 0;
-                                rad_ble::with_state(&rad_ble_state, |state| {
-                                    state.phase = if candidates.is_empty() {
-                                        "scanning".to_owned()
-                                    } else {
-                                        "candidate".to_owned()
-                                    };
-                                    state.connected_name = None;
-                                    state.feature_count = 0;
-                                    state.features.clear();
-                                    state.selected_control_index = None;
-                                    state.controls.clear();
-                                    state.control_revision = state.control_revision.wrapping_add(1);
-                                });
-                                publish_selection(&rad_ble_state, &candidates, selected);
-                            }
-                        }
-                        ButtplugClientEvent::ScanningFinished => {
-                            log::info!("Buttplug BLE scan finished");
-                            rad_ble::with_state(&rad_ble_state, |state| {
-                                if state.connected_name.is_none() {
-                                    state.phase = "scan_finished".to_owned();
-                                }
-                            });
-                        }
-                        ButtplugClientEvent::Error(error) => {
-                            log::error!("Buttplug client error: {error}");
-                            rad_ble::with_state(&rad_ble_state, |state| {
-                                state.phase = "error".to_owned();
-                                state.last_error = Some(error.to_string());
-                            });
-                        }
-                        _ => {}
-                    }
+                    let Some(event) = event else { anyhow::bail!("Buttplug event stream ended"); };
+                    controller.client_event(event);
                 }
-                candidate = candidate_receiver.recv() => {
-                    let Some(candidate) = candidate else {
-                        anyhow::bail!("ESP32 BLE candidate channel closed unexpectedly");
-                    };
-                    let candidate_index = if let Some(index) = candidates
-                        .iter()
-                        .position(|known| known.address == candidate.address)
-                    {
-                        candidates[index] = candidate.clone();
-                        index
-                    } else {
-                        candidates.push(candidate.clone());
-                        candidates.len() - 1
-                    };
-                    log::info!(
-                        "Supported BLE candidate {}: name={:?} address={} protocols={:?} services={:?} manufacturer_ids={:?}",
-                        candidate_index + 1,
-                        candidate.name,
-                        candidate.address,
-                        candidate.protocols,
-                        candidate.advertised_services,
-                        candidate.manufacturer_ids
-                    );
-                    if candidates.len() == 1 {
-                        selected = 0;
-                        log_selected_candidate(&candidates, selected);
-                    }
-                    publish_selection(&rad_ble_state, &candidates, selected);
-                    if TEST_AUTO_APPROVE_NAME == Some(candidate.name.as_str()) {
-                        log::warn!(
-                            "Test-only auto-approving {:?} at {}",
-                            candidate.name,
-                            candidate.address
-                        );
-                        candidate_approver
-                            .approve(&candidate.address)
-                            .map_err(anyhow::Error::msg)?;
-                        rad_ble::with_state(&rad_ble_state, |state| {
-                            state.phase = "connecting".to_owned();
-                        });
-                    }
+                snapshot = candidate_receiver.recv() => {
+                    let Some(snapshot) = snapshot else { anyhow::bail!("BLE discovery channel closed"); };
+                    controller.discovery(snapshot);
                 }
                 control = rad_ble_control_receiver.recv() => {
-                    let Some(control) = control else {
-                        anyhow::bail!("Rust RAD BLE control channel closed unexpectedly");
-                    };
-                    log::info!("RAD BLE injected control: {control:?}");
-                    match control {
-                        RadBleControlEvent::Left => {
-                            if active_device.is_some() {
-                                select_control(
-                                    &rad_ble_state,
-                                    &active_controls,
-                                    &mut selected_control,
-                                    -1,
-                                );
-                            } else {
-                                select_candidate(
-                                    &rad_ble_state,
-                                    &candidates,
-                                    &mut selected,
-                                    -1,
-                                );
-                            }
-                        }
-                        RadBleControlEvent::Right => {
-                            if active_device.is_some() {
-                                select_control(
-                                    &rad_ble_state,
-                                    &active_controls,
-                                    &mut selected_control,
-                                    1,
-                                );
-                            } else {
-                                select_candidate(
-                                    &rad_ble_state,
-                                    &candidates,
-                                    &mut selected,
-                                    1,
-                                );
-                            }
-                        }
-                        RadBleControlEvent::Middle { defer_ms } => {
-                            if defer_ms > 0 {
-                                log::info!(
-                                    "Deferring RAD BLE action by {defer_ms} ms so the control connection can close"
-                                );
-                                tokio::time::sleep(Duration::from_millis(u64::from(defer_ms))).await;
-                            }
-                            if active_device.is_some() {
-                                stop_active_device(
-                                    &rad_ble_state,
-                                    active_device.as_ref(),
-                                    &mut active_controls,
-                                    selected_control,
-                                )
-                                .await;
-                            } else if let Some(candidate) = candidates.get(selected) {
-                                log::info!(
-                                    "RAD BLE approved {:?} at {} for connection",
-                                    candidate.name,
-                                    candidate.address
-                                );
-                                candidate_approver
-                                    .approve(&candidate.address)
-                                    .map_err(anyhow::Error::msg)?;
-                                rad_ble::with_state(&rad_ble_state, |state| {
-                                    state.phase = "connecting".to_owned();
-                                });
-                            } else {
-                                log::info!("No supported BLE candidate is available to approve");
-                            }
-                        }
-                        RadBleControlEvent::EncoderLeft { delta } => {
-                            if active_device.is_some() {
-                                adjust_control(
-                                    &rad_ble_state,
-                                    &mut active_controls,
-                                    selected_control,
-                                    delta,
-                                )
-                                .await;
-                            } else {
-                                select_candidate(
-                                    &rad_ble_state,
-                                    &candidates,
-                                    &mut selected,
-                                    delta.signum(),
-                                );
-                            }
-                        }
-                        RadBleControlEvent::EncoderRight { delta } => {
-                            if active_device.is_some() {
-                                select_control(
-                                    &rad_ble_state,
-                                    &active_controls,
-                                    &mut selected_control,
-                                    delta.signum(),
-                                );
-                            } else {
-                                select_candidate(
-                                    &rad_ble_state,
-                                    &candidates,
-                                    &mut selected,
-                                    delta.signum(),
-                                );
-                            }
-                        }
-                        RadBleControlEvent::Reset => {
-                            log::info!("RAD BLE requested a fresh upstream scan");
-                            if let Err(error) = client.stop_scanning().await {
-                                log::warn!("Could not stop scan during test reset: {error}");
-                            }
-                            stop_active_device(
-                                &rad_ble_state,
-                                active_device.as_ref(),
-                                &mut active_controls,
-                                selected_control,
-                            )
-                            .await;
-                            active_device = None;
-                            active_controls.clear();
-                            selected_control = 0;
-                            candidates.clear();
-                            selected = 0;
-                            rad_ble::with_state(&rad_ble_state, |state| {
-                                state.phase = "scanning".to_owned();
-                                state.candidate_count = 0;
-                                state.selected_index = None;
-                                state.selected_name = None;
-                                state.selected_protocols.clear();
-                                state.candidates.clear();
-                                state.connected_name = None;
-                                state.feature_count = 0;
-                                state.features.clear();
-                                state.selected_control_index = None;
-                                state.controls.clear();
-                                state.control_revision = state.control_revision.wrapping_add(1);
-                                state.last_connected_name = None;
-                                state.last_feature_count = 0;
-                                state.last_features.clear();
-                                state.last_error = None;
-                            });
-                            client
-                                .start_scanning()
-                                .await
-                                .context("could not restart the upstream Buttplug scan")?;
-                        }
-                    }
+                    if let Some(control) = control { controller.input(control); }
                 }
-                _ = button_poll.tick() => {
-                    if left_debounce.update(left_button.is_low()) {
-                        if active_device.is_some() {
-                            select_control(
-                                &rad_ble_state,
-                                &active_controls,
-                                &mut selected_control,
-                                -1,
-                            );
-                        } else {
-                            select_candidate(
-                                &rad_ble_state,
-                                &candidates,
-                                &mut selected,
-                                -1,
-                            );
-                        }
-                    }
-                    if right_debounce.update(right_button.is_low()) {
-                        if active_device.is_some() {
-                            select_control(
-                                &rad_ble_state,
-                                &active_controls,
-                                &mut selected_control,
-                                1,
-                            );
-                        } else {
-                            select_candidate(
-                                &rad_ble_state,
-                                &candidates,
-                                &mut selected,
-                                1,
-                            );
-                        }
-                    }
-                    if center_debounce.update(center_button.is_low()) {
-                        if active_device.is_some() {
-                            stop_active_device(
-                                &rad_ble_state,
-                                active_device.as_ref(),
-                                &mut active_controls,
-                                selected_control,
-                            )
-                            .await;
-                        } else if let Some(candidate) = candidates.get(selected) {
-                            log::info!(
-                                "User approved {:?} at {} for connection",
-                                candidate.name,
-                                candidate.address
-                            );
-                            candidate_approver
-                                .approve(&candidate.address)
-                                .map_err(anyhow::Error::msg)?;
-                            rad_ble::with_state(&rad_ble_state, |state| {
-                                state.phase = "connecting".to_owned();
-                            });
-                        } else {
-                            log::info!("No supported BLE candidate is available to approve");
-                        }
-                    }
-                }
-                _ = encoder_poll.tick() => {
-                    let left_delta = left_encoder
-                        .take_delta()
-                        .context("could not read the left hardware quadrature counter")?;
-                    if left_delta != 0 {
-                        log::info!("Physical left encoder delta: {left_delta}");
-                        if active_device.is_some() {
-                            adjust_control(
-                                &rad_ble_state,
-                                &mut active_controls,
-                                selected_control,
-                                left_delta * 5,
-                            )
-                            .await;
-                        } else {
-                            select_candidate(
-                                &rad_ble_state,
-                                &candidates,
-                                &mut selected,
-                                left_delta,
-                            );
-                        }
-                    }
-
-                    let right_delta = right_encoder
-                        .take_delta()
-                        .context("could not read the right hardware quadrature counter")?;
-                    if right_delta != 0 {
-                        log::info!("Physical right encoder delta: {right_delta}");
-                        if active_device.is_some() {
-                            select_control(
-                                &rad_ble_state,
-                                &active_controls,
-                                &mut selected_control,
-                                right_delta,
-                            );
-                        } else {
-                            select_candidate(
-                                &rad_ble_state,
-                                &candidates,
-                                &mut selected,
-                                right_delta,
-                            );
-                        }
-                    }
+                _ = input_poll.tick() => {
+                    if left_debounce.update(left_button.is_low()) { controller.input(RadBleControlEvent::Left); }
+                    if center_debounce.update(center_button.is_low()) { controller.input(RadBleControlEvent::Middle { defer_ms: 0 }); }
+                    if right_debounce.update(right_button.is_low()) { controller.input(RadBleControlEvent::Right); }
+                    let left_delta = left_encoder.take_delta()?;
+                    if left_delta != 0 { controller.physical_left(left_delta); }
+                    let right_delta = right_encoder.take_delta()?;
+                    if right_delta != 0 { controller.input(RadBleControlEvent::EncoderRight { delta: right_delta }); }
+                    controller.tick();
                 }
                 _ = display_poll.tick() => {
-                    if let Err(error) = display.refresh(&rad_ble_state) {
-                        log::error!("RADR display refresh failed: {error}");
-                        rad_ble::with_state(&rad_ble_state, |state| {
-                            state.last_error = Some(error);
-                        });
-                    }
+                    if let Err(error) = display.refresh(&rad_ble_state) { log::error!("RADR display refresh failed: {error}"); }
                 }
             }
         }

@@ -54,6 +54,9 @@ jobs:
           bash -n tools/build_install_bundle.sh
           python tools/test_build_install_bundle.py
 
+      - name: Test lifecycle, controls, catalog names, and renderer
+        run: cargo +stable test --lib --locked --target x86_64-unknown-linux-gnu
+
       - name: Check formatting
         run: cargo fmt --all --check
 

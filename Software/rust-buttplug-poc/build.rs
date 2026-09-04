@@ -1,4 +1,6 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=RADR_BUTTPLUG_AUTO_APPROVE_NAME");
-    embuild::espidf::sysenv::output();
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("espidf") {
+        embuild::espidf::sysenv::output();
+    }
 }

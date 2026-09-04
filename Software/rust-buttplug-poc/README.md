@@ -48,6 +48,9 @@ The local `esp32_ble` module provides only the target-specific transport:
 - idempotent subscriptions and write-mode fallback matching the behavior of
   Buttplug's desktop BLE manager
 - disconnect and hardware events
+- Just Works bonding when an ATT operation explicitly requires authentication or
+  encryption, followed by one retry of that rejected operation; unrelated I/O
+  errors are not retried as actuator writes
 
 The full upstream catalog is loaded, but this transport makes only its BLE
 devices usable. Upstream USB, HID, serial, websocket, and host-specific
@@ -74,26 +77,76 @@ behavior elsewhere. The official Buttplug source is unmodified.
 
 ## RADR flow
 
-1. Run one unrestricted active BLE scan. Every advertisement is matched against
-   all 132 factory-backed BLE protocol IDs in the loaded upstream catalog; RADR
-   never chooses a protocol before discovery.
-2. Use upstream configuration to discard unsupported advertisements and report
-   every matching device, including all candidate protocol names when an
-   advertisement is ambiguous. Candidate delivery to the UI is lossless rather
-   than capped to a single device or protocol.
-3. Show every candidate on the RADR display and in structured RAD BLE state.
-   The left/right under-screen buttons or either encoder change the selected
-   candidate; the center button explicitly approves it.
-4. Only then let the official Buttplug server connect, identify the precise
-   device, and initialize its protocol.
-5. Enumerate the upstream device features and allowed ranges. Every modifiable
-   output is presented as a horizontal 0–100% control bar without maintaining a
-   second device/settings schema.
-6. In the connected screen, use the right encoder or left/right buttons to
-   select a setting, the left encoder to change its value, and the center button
-   to send the official upstream all-stop command and zero every bar.
-7. Send an upstream-generated all-stop immediately after connection so a newly
-   identified device always begins in a safe state.
+The hardware-independent `flow` module defines explicit searching, menu,
+connecting, connected, reconnecting, disconnecting, and error states. One
+controller handles both physical input and RAD BLE events. Bluetooth operations
+and actuator commands finish asynchronously, so the screen and Cancel button
+remain responsive during device setup.
+
+1. Start in **Devices**. Discovery runs in two-second active-scan bursts, at
+   most once every ten seconds. Knob/button interaction pauses scanning and
+   holds the list for five seconds. Search Again starts a fresh burst immediately.
+   Completed bursts remove absent devices; partial bursts add discoveries.
+   Selection follows the device address when the list changes.
+2. Either physical knob scrolls through the complete list with wraparound.
+   **Left: Menu**, **Middle: Search Again**, **Right: Select**. The menu's right
+   button starts searching again. No discovery match connects automatically.
+3. Names come from the pinned upstream catalog: exact advertisement identifiers,
+   unique single-model protocol names, and Lovense advertisement model tokens
+   resolved against upstream names/identifiers. Otherwise the advertisement is
+   retained. `LVS-Domi39` becomes **Lovense Domi**; suffix digits do not establish
+   a generation. The exact name learned during protocol identification replaces
+   the hint and is reused while that device remains in the list. Duplicate names
+   receive a short address suffix on screen. Full names and addresses remain in
+   structured state.
+4. Select opens a dedicated **Connecting** page immediately. It reports opening
+   the Bluetooth link, discovering services, identifying the device, and setting
+   outputs to zero. Setup has a 45-second deadline and a Cancel button. Detailed
+   errors stay in logs and RAD BLE state; the screen shows a stable error code
+   with a short recovery hint.
+5. Controls become active only after the upstream initial all-stop succeeds.
+   Every upstream output is enumerated; bidirectional outputs expose negative
+   percentages as well as positive percentages. Commands use the upstream step
+   ranges, and timed-position duration is clamped to the upstream duration range.
+   Input-only devices show that no adjustable outputs are available.
+6. **Left: Disconnect**, **Middle: Stop**, **Right: Next setting**. The right
+   knob selects a setting; the left knob adjusts it in five-percent steps.
+   Fast turns are coalesced while a command is pending without losing their final
+   requested value. Stop supersedes older command completions and clears queued
+   adjustments. It does not replay a value after stopping.
+7. Connection loss retains the controls in a disabled **Reconnecting** screen.
+   Up to three attempts reconnect only the explicitly selected cached address,
+   with three seconds between attempts and a 45-second deadline per attempt.
+   Discovery does not run during connection, control, or reconnection. A recovered
+   device is enumerated again and must successfully stop before controls activate;
+   previous output values are never replayed automatically. Devices that rotate
+   their BLE address may require returning to Devices and searching again.
+8. Disconnect attempts all-stop, invalidates queued connection/command work, and
+   waits for the physical central link to close before returning to Devices.
+   A stop/disconnect failure is shown instead of silently claiming success.
+
+The screen uses a black-and-white palette with three lifecycle icons, a moving
+list viewport, and a separate connection page. The scan list omits protocol IDs,
+source hashes, and diagnostic counts. `state.read` retains diagnostic details,
+adds `status`, `errorCode`, `elapsedSeconds`, and `controlsEnabled`, and includes
+`minimumPercent` on controls. RAD BLE button names map to the same physical
+buttons; automation that formerly used Middle to accept a candidate must use
+Right. Middle still means Stop on the connected screen.
+
+### Error codes
+
+| Code | Meaning | Recovery |
+| --- | --- | --- |
+| E101 | Discovery failed | Search Again |
+| E201 | Bluetooth link could not open | Check power, distance, and other connected apps |
+| E202 | Selected device or connection worker unavailable | Search Again |
+| E203 | Device setup exceeded its deadline | Check device and retry from Devices |
+| E204 | Device disconnected or protocol setup failed | Check compatibility/power and retry |
+| E205 | Upstream client/server error | Inspect `lastError` and retry |
+| E206 | No compatible GATT services | Verify the selected device; an advertisement match can be broad |
+| E301 | Output command failed or timed out | Controls pause while reconnecting |
+| E302 | All-stop failed | Controls stay disabled; check/stop the device directly |
+| E303 | Stop/disconnect did not complete successfully | Check the device before searching again |
 
 Each enumerated feature is also emitted on serial as a compact
 `BUTTPLUG_FEATURE_JSON` object. Its `definition` is the official v4
@@ -121,9 +174,14 @@ specialization rejected it, but the observation demonstrates why a match must
 be presented to the user instead of being treated as permission to connect.
 Buttplug's address allow/deny entries can provide an additional persistent
 policy. A production RADR screen can consume the same candidate channel used
-by this firmware without changing the transport or protocols.
+by this firmware without changing the protocols.
 
-## Physical verification
+## Historical physical verification
+
+These records describe the earlier experimental firmware, before the flow audit.
+They have not been rerun for the changes described above. Host tests and builds
+are not physical-device qualification.
+
 
 The release firmware was built and flashed to a RADR ESP32-S3 with 16 MB flash
 and 8 MB octal PSRAM. The application occupies 4,978,688 of 6,553,600 bytes in
@@ -266,9 +324,8 @@ ignored artifacts under `dist/`:
 The builder rejects a bundle unless both images identify as ESP32-S3 DIO/80 MHz
 16 MB images, the binary partition table exactly matches `partitions.csv`, the
 application fits in `app0`, and the application bytes in both artifacts are
-identical. It also requires blank NVS and OTA-selection sectors. The current
-factory image is 5,044,224 bytes; it packages the 4,978,688-byte application
-without padding the unused remainder of flash.
+identical. It also requires blank NVS and OTA-selection sectors. The builder reports the exact application and factory-image sizes in
+`bundle.json`, without padding the unused remainder of flash.
 
 The factory image can be installed directly at offset zero. This replaces the
 bootloader, partition table, NVS, OTA selection data, and active application, so
@@ -295,8 +352,8 @@ swiftc -framework CoreBluetooth -framework Foundation \
 /tmp/radr-buttplug-ble-mock mizzzee-v2
 ```
 
-The RADR serial log lists and selects `XHT`; press the center under-screen
-button to approve the connection. The mock then prints each write it receives,
+The RADR serial log lists and selects `XHT`; press the right under-screen
+button to select the connection. The mock then prints each write it receives,
 culminating in the seven-byte all-stop packet shown above.
 
 The same mock has a second profile for the receive path:
@@ -336,3 +393,33 @@ upstream identifier converts that response to `1001`, selects `Hismith Sex
 Machine`, and exposes its `Oscillate` range. Its upstream-generated all-stop
 packet is `aa 04 00 04`. Use `HISMITH` as the test-only auto-approval name for
 an unattended run.
+
+## Audit validation
+
+Run the host regression suite from this directory (use your host target triple):
+
+```sh
+cargo +stable test --lib --locked --target aarch64-apple-darwin
+# Linux / CI:
+cargo +stable test --lib --locked --target x86_64-unknown-linux-gnu
+```
+
+The suite exercises the actual controller with a mocked ESP32 boundary, the real
+in-process upstream server with simulated two-motor, bidirectional, and stroker
+archetypes, catalog name resolution, command supersession, scan/interaction
+policy, timeout/cancellation/reconnect states, and the exact framebuffer renderer.
+Set `RADR_PREVIEW_DIR` to an output directory to export screen previews as PPM
+images during the renderer test.
+
+Before hardware qualification, also run `cargo fmt --all --check`,
+`cargo clippy --release --locked -- -D warnings`,
+`python3 tools/test_build_install_bundle.py`, and
+`./tools/build_install_bundle.sh`. CI runs the host tests alongside the existing
+firmware and installation-package checks.
+
+Hardware follow-up must exercise discovery in a dense BLE environment, a real
+Lovense device, an authentication-required device, notification/indication
+protocols, removal during each setup stage, physical disconnect/reconnect, and
+Stop during active output. The upstream BLE fixture matrix must be rerun before
+claiming the earlier hardware coverage for this revision. This target remains
+experimental and does not implement the production updater or qualify a release.

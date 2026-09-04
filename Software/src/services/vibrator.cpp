@@ -1,4 +1,5 @@
 #include "vibrator.h"
+#include "utils/psramTask.h"
 
 #include <unordered_map>
 #include <vector>
@@ -48,7 +49,7 @@ void vibratorTask(void *parameter) {
             currentPattern = VibratorPattern::NONE;
     }
 
-    vTaskDelete(NULL);
+    exitPsramTask();
 }
 
 void initVibrator() {
@@ -56,7 +57,7 @@ void initVibrator() {
     digitalWrite(pins::VIBRATOR_PIN, LOW);
     playVibratorPattern(VibratorPattern::SINGLE_PULSE);
 
-    xTaskCreatePinnedToCore(vibratorTask,                  // Task function
+    createPsramTask(vibratorTask,                  // Task function
                             "VibratorTask",                // Task name
                             3 * configMINIMAL_STACK_SIZE,  // Stack size
                             nullptr,                       // Parameter

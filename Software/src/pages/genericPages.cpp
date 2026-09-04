@@ -1,4 +1,5 @@
 #include "pages/genericPages.h"
+#include "utils/psramTask.h"
 
 #include <Adafruit_GFX.h>
 #include <Fonts/FreeSans9pt7b.h>
@@ -47,8 +48,7 @@ void drawPageTask(void *pvParameters) {
     TextPage *params = static_cast<TextPage *>(pvParameters);
 
     if (params == nullptr) {
-        vTaskDelete(NULL);
-        return;
+        exitPsramTask();
     }
 
     if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
@@ -127,7 +127,7 @@ void drawPageTask(void *pvParameters) {
     // Clean up dynamically allocated parameters if they came from
     // updateStatusText For now, just avoid the delete to prevent crashes -
     // memory leak is better than crash delete params;
-    vTaskDelete(NULL);
+    exitPsramTask();
 }
 
 void updateStatusText(const String &statusMessage) {

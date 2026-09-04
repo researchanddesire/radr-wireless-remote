@@ -104,7 +104,7 @@ void setup() {
     setupAnimatedIcons();
     setupIdleMonitor();
 
-    xTaskCreatePinnedToCore(
+    const BaseType_t buttonTaskCreated = xTaskCreatePinnedToCore(
         [](void *pvParameters) {
             while (true) {
                 vTaskDelay(10);
@@ -122,6 +122,9 @@ void setup() {
         },
         "buttonTask", 6 * configMINIMAL_STACK_SIZE, NULL,
         configMAX_PRIORITIES - 1, NULL, 0);
+    if (buttonTaskCreated != pdPASS) {
+        ESP_LOGE(TAG, "Could not create button task; buttons will not respond");
+    }
 }
 
 void loop() {

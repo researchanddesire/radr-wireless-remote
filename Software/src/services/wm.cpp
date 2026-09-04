@@ -9,7 +9,9 @@ SemaphoreHandle_t wmMutex = nullptr;
 
 void initWM() {
     if (wmMutex == nullptr) wmMutex = xSemaphoreCreateMutex();
-    WiFi.useStaticBuffers(true);
+    // Dynamic buffers: static Wi-Fi buffers pin ~23 KB of internal RAM at boot
+    // that BLE and the UI tasks need. See PSRAM task notes in utils/psramTask.h.
+    WiFi.useStaticBuffers(false);
     WiFi.begin();
 
     wm.setSaveConfigCallback(

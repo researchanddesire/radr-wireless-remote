@@ -8,6 +8,10 @@
 extern bool isSoftwareUpdateAvailable;
 extern bool isFilesystemUpdateAvailable;
 
+// Why the last self-update step stopped. Empty means "no update available"
+// (up to date); anything else is shown on the Update Failed page.
+extern String updateFailureReason;
+
 bool isUpdateAvailable();
 bool confirmRunningFirmware();
 

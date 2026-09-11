@@ -1,21 +1,25 @@
 #include "pairing.h"
 
-#include <ArduinoJson.h>
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
-#include <HTTPClient.h>
-#include "FirmwareProvenance.h"
 #include <components/TextButton.h>
 #include <constants/Colors.h>
 #include <constants/Sizes.h>
 #include <devices/device.h>
+#include <esp_heap_caps.h>
 #include <pages/displayUtils.h>
 #include <pages/genericPages.h>
 #include <pins.h>
 #include <services/display.h>
 
-// Forward declaration — defined in remote.cpp
-extern void fireStateMachineDoneEvent();
+#include "devices/researchAndDesire/ossm/ossm_state.h"
+// Defined in remote.cpp; keeps the state-machine headers (and their
+// header-static pages) out of this translation unit.
+void fireStateMachineOssmNoWifiEvent();
+void fireStateMachineOssmUnsupportedEvent();
+void fireStateMachineOssmLinkLostEvent();
+void fireStateMachineTaskFailedEvent();
+#include "utils/psramTask.h"
 
 // OSSM Pairing page definitions (extern-declared in TextPages.h)
 const TextPage ossmPairingConnectingPage = {
@@ -35,30 +39,32 @@ const TextPage ossmPairingSuccessPage = {
 const TextPage ossmPairingWifiPage = {
     .title = "WiFi Required",
     .description =
-        "Connect to WiFi first to pair your OSSM with the dashboard.",
+        "Your OSSM needs WiFi to pair with the dashboard. Share this "
+        "remote's WiFi with it, then try again.",
+    .leftButtonText = GO_BACK,
+    .rightButtonText = "Share Wi-Fi",
+};
+
+const TextPage ossmPairingFailedPage = {
+    .title = "Pairing Failed",
+    .description = "",
+    .leftButtonText = GO_BACK,
+};
+
+const TextPage ossmUnsupportedPage = {
+    .title = "Update Your OSSM",
+    .description =
+        "Your OSSM firmware is too old for this feature. Update the OSSM "
+        "using the web flasher or contact support.",
     .leftButtonText = GO_BACK,
 };
 
 static const char *PAIRING_TAG = "PAIRING";
 
-// Parse a semicolon-delimited string and return the field at the given index.
-// Returns empty string if the index is out of range.
-static String getField(const std::string &data, int fieldIndex) {
-    int currentField = 0;
-    size_t fieldStart = 0;
-
-    for (size_t i = 0; i <= data.size(); i++) {
-        if (i == data.size() || data[i] == ';') {
-            if (currentField == fieldIndex) {
-                return String(data.substr(fieldStart, i - fieldStart).c_str());
-            }
-            currentField++;
-            fieldStart = i + 1;
-        }
-    }
-
-    return "";
-}
+// How long the OSSM gets to enter its pairing flow after go:pairing before
+// we assume its firmware does not know the command.
+static constexpr uint32_t OSSM_RESPONSE_TIMEOUT_MS = 10000;
+static constexpr uint32_t OSSM_POLL_INTERVAL_MS = 400;
 
 static void drawPairingCodeScreen(const String &pairingCode) {
     if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(200)) != pdTRUE) {
@@ -125,133 +131,105 @@ static void drawPairingCodeScreen(const String &pairingCode) {
     backButton.tick();
 }
 
-static void ossmPairingTask(void *pvParameters) {
-    // Capture device pointer and characteristic early to avoid race
-    // with disconnect
-    if (device == nullptr || !device->isConnected) {
-        ESP_LOGW(PAIRING_TAG, "No device connected");
-        updateStatusText("No device connected.");
-        vTaskDelete(nullptr);
-        return;
-    }
+void drawOssmPairingCodeFromState() {
+    const OssmObservedState observed = getOssmObservedState();
+    drawPairingCodeScreen(String(observed.info.pairingCode.c_str()));
+}
 
+void drawOssmFailurePage(const TextPage &page, const char *reason) {
+    const OssmObservedState observed = getOssmObservedState();
+    clearPage();
+    createPsramTask(drawPageTask, "drawPageTask", 5 * configMINIMAL_STACK_SIZE,
+                    const_cast<TextPage *>(&page), 5, NULL, 1);
+    vTaskDelay(pdMS_TO_TICKS(150));  // let the page paint before the reason
+    updateStatusText(reason != nullptr ? reason
+                                       : ossmErrorReason(observed.info.error));
+}
+
+// Reads the OSSM pairing characteristic; empty on any failure.
+static std::string readOssmPairingInfo() {
+    if (device == nullptr || !device->isConnected) return "";
     auto it = device->characteristics.find("pairing");
     if (it == device->characteristics.end() ||
         it->second.pCharacteristic == nullptr) {
-        ESP_LOGW(PAIRING_TAG, "Pairing characteristic not found");
-        updateStatusText("Could not read device info.");
-        vTaskDelete(nullptr);
-        return;
+        return "";
     }
-
-    // Capture the characteristic pointer before any async disconnect
-    NimBLERemoteCharacteristic *pairingChar = it->second.pCharacteristic;
-
-    // Read OSSM device info from BLE
-    // Format: "MAC;chipModel;wifiConnected;md5;version;efuseMacHex"
-    std::string pairingInfo;
     try {
-        pairingInfo = pairingChar->readValue();
+        return it->second.pCharacteristic->readValue();
     } catch (...) {
-        ESP_LOGW(PAIRING_TAG, "BLE read failed");
-        updateStatusText("Could not read device info.");
-        vTaskDelete(nullptr);
-        return;
+        return "";
     }
+}
 
+// Follows the OSSM's state characteristic by polling while this page's
+// follow generation is current and the OSSM stays connected. The first
+// OSSM_RESPONSE_TIMEOUT_MS decide whether the OSSM entered the requested flow
+// (state prefix); if it never does, its firmware predates the command.
+static const char *const TERMINAL_STATES[] = {"pairing.failed", "pairing.success", "pairing.success.idle"};
+
+static void followOssmFlow(const char *prefix) {
+    const uint32_t generation = ossmFollowGeneration();
+    const uint32_t responseDeadline = millis() + OSSM_RESPONSE_TIMEOUT_MS;
+    bool entered = false;
+    while (ossmFollowGeneration() == generation && device != nullptr &&
+           device->isConnected) {
+        const std::string json = device->readRawState();
+        if (!json.empty()) ingestOssmStateJson(json.c_str(), json.size());
+        {
+            const OssmObservedState observed = getOssmObservedState();
+            if (observed.valid) {
+                for (const char *terminal : TERMINAL_STATES) {
+                    if (observed.info.state == terminal) return;
+                }
+            }
+        }
+        if (!entered) {
+            const OssmObservedState observed = getOssmObservedState();
+            if (observed.valid && ossmStateStartsWith(observed.info.state, prefix)) {
+                entered = true;
+            } else if ((int32_t)(responseDeadline - millis()) <= 0) {
+                fireStateMachineOssmUnsupportedEvent();
+                return;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(OSSM_POLL_INTERVAL_MS));
+    }
+}
+
+static void ossmPairingTask(void *) {
+    ESP_LOGW(PAIRING_TAG, "[MEM] request: internal free=%u largest=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
+                                                        MALLOC_CAP_8BIT));
+    const std::string pairingInfo = readOssmPairingInfo();
     if (pairingInfo.empty()) {
-        ESP_LOGW(PAIRING_TAG, "Empty pairing info");
-        updateStatusText("Could not read device info.");
+        ESP_LOGW(PAIRING_TAG, "Could not read OSSM pairing info");
+        // A failed read on a "connected" OSSM means the link is dead (the
+        // OSSM rebooted or crashed mid-connect and the disconnect callback
+        // never fired). Treat it as a disconnect so the RADR cleans up.
+        updateStatusText("Lost the OSSM connection.");
+        fireStateMachineOssmLinkLostEvent();
+        vTaskDelete(nullptr);
+        return;
+    }
+    ESP_LOGI(PAIRING_TAG, "OSSM pairing info: %s", pairingInfo.c_str());
+
+    if (!pairingInfoHasWifi(pairingInfo)) {
+        fireStateMachineOssmNoWifiEvent();
         vTaskDelete(nullptr);
         return;
     }
 
-    ESP_LOGI(PAIRING_TAG, "Pairing info: %s", pairingInfo.c_str());
-
-    // Parse fields
-    String mac = getField(pairingInfo, 0);
-    String md5 = getField(pairingInfo, 3);
-    String version = getField(pairingInfo, 4);
-    String efuseMacHex = getField(pairingInfo, 5);
-
-    if (mac.isEmpty()) {
-        ESP_LOGW(PAIRING_TAG, "Could not parse MAC from pairing info");
-        updateStatusText("Could not parse device info.");
-        vTaskDelete(nullptr);
-        return;
-    }
-
-    // Build JSON payload matching the OSSM's own /api/ossm/auth call
-    JsonDocument doc;
-    doc["mac"] = mac;
-    doc["chip"] = efuseMacHex;
-    doc["md5"] = md5;
-    doc["device"] = "OSSM";
-    doc["version"] = version;
-
-    String body;
-    serializeJson(doc, body);
-
-    // POST to RAD Dashboard
-    String url = String(RAD_SERVER) + "/api/ossm/auth";
-    ESP_LOGI(PAIRING_TAG, "POST %s", url.c_str());
-
-    HTTPClient http;
-    http.begin(url);
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("X-RAD-Firmware-Provenance-Capability", "1");
-    const auto provenanceToken = firmware::provenance::currentToken();
-    if (!provenanceToken.empty()) {
-        http.addHeader("X-RAD-Firmware-Provenance", provenanceToken.c_str());
-        http.addHeader("X-RAD-Firmware-Provenance-ID",
-                       firmware::provenance::currentTokenId().c_str());
-        http.addHeader("X-RAD-Firmware-Image-SHA256",
-                       firmware::provenance::currentImageSha256().c_str());
-    }
-
-    int httpCode = http.POST(body);
-
-    if (httpCode != 200) {
-        ESP_LOGW(PAIRING_TAG, "Auth failed with HTTP %d", httpCode);
-        String errorMsg = "Pairing failed (HTTP " + String(httpCode) + ")";
-        http.end();
-        updateStatusText(errorMsg);
-        vTaskDelete(nullptr);
-        return;
-    }
-
-    String payload = http.getString();
-    http.end();
-
-    JsonDocument resp;
-    DeserializationError err = deserializeJson(resp, payload);
-    if (err) {
-        ESP_LOGW(PAIRING_TAG, "JSON parse error: %s", err.c_str());
-        updateStatusText("Invalid server response.");
-        vTaskDelete(nullptr);
-        return;
-    }
-
-    String pairingCode = resp["pairingCode"].as<String>();
-    bool isPaired = resp["isPaired"].as<bool>();
-    ESP_LOGI(PAIRING_TAG, "Auth response: code=%s isPaired=%d",
-             pairingCode.c_str(), isPaired);
-
-    if (isPaired) {
-        // Already paired — transition to success screen
-        fireStateMachineDoneEvent();
-        vTaskDelete(nullptr);
-        return;
-    }
-
-    // Not yet paired — draw the pairing code and QR code
-    drawPairingCodeScreen(pairingCode);
-
+    if (device != nullptr) device->onPairing();
+    followOssmFlow("pairing");
     vTaskDelete(nullptr);
 }
 
-void startOssmPairingCheck() {
-    xTaskCreatePinnedToCore(ossmPairingTask, "ossmPairingTask",
-                            20 * configMINIMAL_STACK_SIZE, nullptr, 1, nullptr,
-                            1);
+void startOssmPairingRequest() {
+    if (createInternalTask(ossmPairingTask, "ossmPairingTask",
+                           8 * configMINIMAL_STACK_SIZE, nullptr, 1, nullptr,
+                           1) != pdPASS) {
+        // task_failed_event -> ossm_pairing_failed with the out-of-memory reason
+        fireStateMachineTaskFailedEvent();
+    }
 }

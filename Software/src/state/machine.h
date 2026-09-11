@@ -43,10 +43,8 @@ struct ossm_remote_state {
             "main_menu"_s + event<right_button_pressed>[isOption<>(MenuItemE::OSSM_STREAMING)] / sendStreaming = "streaming_screen"_s,
             "main_menu"_s + event<right_button_pressed>[isOption<>(MenuItemE::OSSM_HELP)] = "ossm_help"_s,
             "main_menu"_s + event<right_button_pressed>[isOption<>(MenuItemE::OSSM_RESTART)] = "ossm_restart_confirm"_s,
-            "main_menu"_s + event<right_button_pressed>[isOption<>(MenuItemE::OSSM_PAIRING) && isOnline<>] = "ossm_pairing"_s,
-            "main_menu"_s + event<right_button_pressed>[isOption<>(MenuItemE::OSSM_PAIRING)] = "ossm_pairing_wifi"_s,
-            "main_menu"_s + event<right_button_pressed>[isOption<>(MenuItemE::OSSM_UPDATE) && isOnline<>] = "ossm_update_check"_s,
-            "main_menu"_s + event<right_button_pressed>[isOption<>(MenuItemE::OSSM_UPDATE)] = "ossm_update_wifi"_s,
+            "main_menu"_s + event<right_button_pressed>[isOption<>(MenuItemE::OSSM_PAIRING)] = "ossm_pairing"_s,
+            "main_menu"_s + event<right_button_pressed>[isOption<>(MenuItemE::OSSM_UPDATE)] = "ossm_update_check"_s,
             "main_menu"_s + event<left_button_pressed>[isConnected && isSimplePenetrationMode] / start = "simple_penetration_control"_s,
             "main_menu"_s + event<left_button_pressed>[isConnected] / start = "device_draw_control"_s,
             "main_menu"_s + event<connected_event> / start = "device_draw_control"_s,
@@ -63,18 +61,33 @@ struct ossm_remote_state {
 
 
 
-            "update"_s + on_entry<_> / (drawPage(updatePage), startTask(updateTask, updateTaskName, updateTaskHandle)),
+            "update"_s + on_entry<_> / (drawPage(updatePage), startTask(updateTask, updateTaskName, &updateTaskHandle)),
+            // Self-update. BLE is torn down inside updateTask, so every outcome
+            // ends in a restart (button, or 10 s timer on the result pages).
+            "update"_s + event<done> [updateFailed<>] = "update.failed"_s,
             "update"_s + event<done> [hasFilesystemUpdate<>] = "update.filesystem"_s,
             "update"_s + event<done> [hasSoftwareUpdate<>] = "update.software"_s,
-            "update"_s + event<done> = "update.done"_s,
-            "update.filesystem"_s + on_entry<_> / (drawPage(updateFilesystemPage), startTask(updateFilesystemTask, updateFilesystemTaskName, updateFilesystemTaskHandle)),
+            "update"_s + event<done> = "update.uptodate"_s,
+            "update"_s + event<task_failed_event> = "update.failed"_s,
+            "update.filesystem"_s + on_entry<_> / (drawPage(updateFilesystemPage), startTask(updateFilesystemTask, updateFilesystemTaskName, &updateFilesystemTaskHandle)),
+            "update.filesystem"_s + event<done>[updateFailed<>] = "update.failed"_s,
             "update.filesystem"_s + event<done>[hasSoftwareUpdate<>] = "update.software"_s,
-            "update.filesystem"_s + event<done> = "update.done"_s,
-            "update.software"_s + on_entry<_> / (drawPage(updateSoftwarePage), startTask(updateSoftwareTask, updateSoftwareTaskName, updateSoftwareTaskHandle)),
+            "update.filesystem"_s + event<done> = "update.uptodate"_s,
+            "update.filesystem"_s + event<task_failed_event> = "update.failed"_s,
+            "update.software"_s + on_entry<_> / (drawPage(updateSoftwarePage), startTask(updateSoftwareTask, updateSoftwareTaskName, &updateSoftwareTaskHandle)),
+            "update.software"_s + event<done>[updateFailed<>] = "update.failed"_s,
             "update.software"_s + event<done> = "restart"_s,
-            "update.done"_s + on_entry<_> / (drawPage(updateDonePage)),
-            "update.done"_s + event<left_button_pressed> = "restart"_s,
-            "update.done"_s + event<right_button_pressed> = "restart"_s,
+            "update.software"_s + event<task_failed_event> = "update.failed"_s,
+            "update.uptodate"_s + on_entry<_> / (drawPage(updateUpToDatePage), startAutoRestart),
+            "update.uptodate"_s + event<done> = "restart"_s,
+            "update.uptodate"_s + event<left_button_pressed> = "restart"_s,
+            "update.uptodate"_s + event<right_button_pressed> = "restart"_s,
+            "update.uptodate"_s + boost::sml::on_exit<_> / cancelAutoRestart,
+            "update.failed"_s + on_entry<_> / (drawUpdateFailed, startAutoRestart),
+            "update.failed"_s + event<done> = "restart"_s,
+            "update.failed"_s + event<left_button_pressed> = "restart"_s,
+            "update.failed"_s + event<right_button_pressed> = "restart"_s,
+            "update.failed"_s + boost::sml::on_exit<_> / cancelAutoRestart,
 
             
             "update.wifi"_s + on_entry<_> / (drawPage(wifiSettingsPage), startWiFiPortal),
@@ -143,35 +156,66 @@ struct ossm_remote_state {
             "ossm_restarting"_s + event<left_button_pressed> / disconnect = "main_menu"_s,
             "ossm_restarting"_s + boost::sml::on_exit<_> / cancelOssmRestartWait,
 
-            // OSSM Pairing
-            "ossm_pairing"_s + on_entry<_> / (drawPage(ossmPairingConnectingPage), checkOssmPairing),
-            "ossm_pairing"_s + event<done> = "ossm_pairing_success"_s,
+            // OSSM Pairing: the OSSM registers itself with the dashboard on
+            // go:pairing; we follow its state characteristic (ossm_state_event).
+            "ossm_pairing"_s + on_entry<_> / (drawPage(ossmPairingConnectingPage), resetOssmObserved, startOssmPairing),
+            "ossm_pairing"_s + event<ossm_state_event>[ossmPairingDone<>] = "ossm_pairing_success"_s,
+            "ossm_pairing"_s + event<ossm_state_event>[ossmPairingFailed<>] / drawOssmPairingFailed = "ossm_pairing_failed"_s,
+            "ossm_pairing"_s + event<ossm_state_event>[ossmPairingCodeReady<>] / drawOssmPairingCode = "ossm_pairing_code"_s,
+            "ossm_pairing"_s + event<ossm_no_wifi_event> = "ossm_pairing_wifi"_s,
+            "ossm_pairing"_s + event<ossm_unsupported_event> = "ossm_unsupported"_s,
+            "ossm_pairing"_s + event<task_failed_event> / drawOssmPairingOutOfMemory = "ossm_pairing_failed"_s,
             "ossm_pairing"_s + event<left_button_pressed> = "main_menu"_s,
             "ossm_pairing"_s + event<disconnected_event> / disconnect = "main_menu"_s,
+
+            "ossm_pairing_code"_s + event<ossm_state_event>[ossmPairingDone<>] = "ossm_pairing_success"_s,
+            "ossm_pairing_code"_s + event<ossm_state_event>[ossmPairingFailed<>] / drawOssmPairingFailed = "ossm_pairing_failed"_s,
+            "ossm_pairing_code"_s + event<left_button_pressed> = "main_menu"_s,
+            "ossm_pairing_code"_s + event<disconnected_event> / disconnect = "main_menu"_s,
 
             "ossm_pairing_success"_s + on_entry<_> / drawPage(ossmPairingSuccessPage),
             "ossm_pairing_success"_s + event<left_button_pressed> = "main_menu"_s,
             "ossm_pairing_success"_s + event<right_button_pressed> = "main_menu"_s,
             "ossm_pairing_success"_s + event<disconnected_event> / disconnect = "main_menu"_s,
 
+            "ossm_pairing_failed"_s + event<left_button_pressed> = "main_menu"_s,
+            "ossm_pairing_failed"_s + event<right_button_pressed> = "main_menu"_s,
+            "ossm_pairing_failed"_s + event<disconnected_event> / disconnect = "main_menu"_s,
+
             "ossm_pairing_wifi"_s + on_entry<_> / drawPage(ossmPairingWifiPage),
             "ossm_pairing_wifi"_s + event<left_button_pressed> = "main_menu"_s,
+            "ossm_pairing_wifi"_s + event<right_button_pressed> / shareOssmWifi = "main_menu"_s,
             "ossm_pairing_wifi"_s + event<disconnected_event> / disconnect = "main_menu"_s,
 
-            // OSSM Update
-            "ossm_update_check"_s + on_entry<_> / (drawPage(ossmUpdateCheckPage), checkOssmUpdate),
-            "ossm_update_check"_s + event<done>[hasOssmUpdate<>] = "ossm_update_confirm"_s,
-            "ossm_update_check"_s + event<done> = "ossm_update_none"_s,
+            // OSSM firmware predates go:pairing / go:update
+            "ossm_unsupported"_s + on_entry<_> / drawPage(ossmUnsupportedPage),
+            "ossm_unsupported"_s + event<left_button_pressed> = "main_menu"_s,
+            "ossm_unsupported"_s + event<right_button_pressed> = "main_menu"_s,
+            "ossm_unsupported"_s + event<disconnected_event> / disconnect = "main_menu"_s,
+
+            // OSSM Update: the OSSM checks and installs on go:update; we follow
+            // update.checking -> update.installing (reboot) | update.idle | update.failed.
+            "ossm_update_check"_s + on_entry<_> / (drawPage(ossmUpdateCheckPage), resetOssmObserved, startOssmUpdate),
+            "ossm_update_check"_s + event<ossm_state_event>[ossmInState<>("update.idle")] = "ossm_update_none"_s,
+            "ossm_update_check"_s + event<ossm_state_event>[ossmInState<>("update.available")] / drawOssmUpdateAvailable = "ossm_update_available"_s,
+            "ossm_update_check"_s + event<ossm_state_event>[ossmInState<>("update.installing")] = "ossm_update_updating"_s,
+            "ossm_update_check"_s + event<ossm_state_event>[ossmInState<>("update.failed")] / drawOssmUpdateFailed = "ossm_update_failed"_s,
+            "ossm_update_check"_s + event<ossm_no_wifi_event> = "ossm_update_wifi"_s,
+            "ossm_update_check"_s + event<ossm_unsupported_event> = "ossm_unsupported"_s,
+            "ossm_update_check"_s + event<task_failed_event> / drawOssmUpdateOutOfMemory = "ossm_update_failed"_s,
             "ossm_update_check"_s + event<left_button_pressed> = "main_menu"_s,
             "ossm_update_check"_s + event<disconnected_event> / disconnect = "main_menu"_s,
 
-            "ossm_update_confirm"_s + on_entry<_> / drawPage(ossmUpdateConfirmPage),
-            "ossm_update_confirm"_s + event<right_button_pressed> / sendOssmUpdate = "ossm_update_updating"_s,
-            "ossm_update_confirm"_s + event<left_button_pressed> = "main_menu"_s,
-            "ossm_update_confirm"_s + event<disconnected_event> / disconnect = "main_menu"_s,
+            // The OSSM waits in update.available until we confirm (second go:update)
+            // or cancel (back to the main menu sends go:menu).
+            "ossm_update_available"_s + event<right_button_pressed> / sendOssmInstall = "ossm_update_updating"_s,
+            "ossm_update_available"_s + event<ossm_state_event>[ossmInState<>("update.failed")] / drawOssmUpdateFailed = "ossm_update_failed"_s,
+            "ossm_update_available"_s + event<left_button_pressed> = "main_menu"_s,
+            "ossm_update_available"_s + event<disconnected_event> / disconnect = "main_menu"_s,
 
             "ossm_update_updating"_s + on_entry<_> / (drawPage(ossmUpdateUpdatingPage), startOssmUpdateWait),
-            "ossm_update_updating"_s + event<disconnected_event> / disconnectQuiet,
+            "ossm_update_updating"_s + event<ossm_state_event>[ossmInState<>("update.failed")] / drawOssmUpdateFailed = "ossm_update_failed"_s,
+            "ossm_update_updating"_s + event<disconnected_event> / (disconnectQuiet, startOssmRebootWait),
             "ossm_update_updating"_s + event<done> / disconnectQuiet = "device_search"_s,
             "ossm_update_updating"_s + event<left_button_pressed> / disconnect = "main_menu"_s,
             "ossm_update_updating"_s + boost::sml::on_exit<_> / cancelOssmUpdateWait,
@@ -181,8 +225,13 @@ struct ossm_remote_state {
             "ossm_update_none"_s + event<right_button_pressed> = "main_menu"_s,
             "ossm_update_none"_s + event<disconnected_event> / disconnect = "main_menu"_s,
 
+            "ossm_update_failed"_s + event<left_button_pressed> = "main_menu"_s,
+            "ossm_update_failed"_s + event<right_button_pressed> = "main_menu"_s,
+            "ossm_update_failed"_s + event<disconnected_event> / disconnect = "main_menu"_s,
+
             "ossm_update_wifi"_s + on_entry<_> / drawPage(ossmUpdateWifiPage),
             "ossm_update_wifi"_s + event<left_button_pressed> = "main_menu"_s,
+            "ossm_update_wifi"_s + event<right_button_pressed> / shareOssmWifi = "main_menu"_s,
             "ossm_update_wifi"_s + event<disconnected_event> / disconnect = "main_menu"_s,
 
             "restart"_s + on_entry<_> / espRestart,

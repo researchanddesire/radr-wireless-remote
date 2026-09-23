@@ -137,8 +137,10 @@ void observeTask(void*) {
             internet = checkInternet();
             if (internet) lastNetworkMs = millis();
         }
-        const uint32_t sampled = millis();
         const auto lastProgress = progressMs.load(std::memory_order_relaxed);
+        // Read progress first: another core can advance it while we sample.
+        // Taking the clock first could report a wrapped, enormous task age.
+        const uint32_t sampled = millis();
         bool applicationReady = ready.load(std::memory_order_relaxed) && lastProgress != 0;
 #if defined(RAD_HIL_LOCKBOX_MQTT)
         // Retain the original Lockbox gate's staging MQTT requirement.

@@ -127,6 +127,9 @@ bool checkInternet() {
 }
 
 void observeTask(void*) {
+    // Boot and an immediately scheduled reporter can share one millisecond.
+    // Start at the normal cadence so the first heartbeat proves advancing time.
+    vTaskDelay(pdMS_TO_TICKS(5000));
     uint32_t previousProbe = 0;
     for (;;) {
         const uint32_t now = millis();

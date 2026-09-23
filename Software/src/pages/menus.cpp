@@ -1,3 +1,4 @@
+#include "services/radHil.h"
 #include "menus.h"
 #include "utils/psramTask.h"
 
@@ -278,6 +279,7 @@ void drawMenuTask(void *pvParameters) {
     };
 
     while (isInCorrectState() && !menuTaskExitRequested) {
+        radHilProgress(stateMachine->is("main_menu"_s));
         // Shoulder button polling for tab switching (main_menu only)
         if (isInMainMenu() && tabBarHeight > 0) {
             bool curLeftShoulder = digitalRead(pins::BTN_L_SHOULDER);

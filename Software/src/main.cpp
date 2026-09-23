@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "services/radHil.h"
 
 #include <OneButton.h>
 #include <freertos/FreeRTOS.h>
@@ -41,6 +42,7 @@ extern "C" bool verifyRollbackLater() { return true; }
 
 void setup() {
     Serial.begin(115200);
+    radHilStart();
 
 #ifdef DEBUG
     delay(5000);

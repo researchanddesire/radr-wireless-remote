@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "services/radHil.h"
 
 #include <OneButton.h>
 #include <freertos/FreeRTOS.h>
@@ -54,6 +55,7 @@ void setup() {
     }
 
     ESP_LOGD(TAG, "PSRAM found: %d", psramFound());
+    radHilStart();
 
     // init buttons
     leftShoulderBtn = OneButton(pins::BTN_L_SHOULDER, true, true);

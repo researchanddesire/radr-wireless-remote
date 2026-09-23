@@ -1,0 +1,157 @@
+name: PR firmware validation
+on:
+  pull_request:
+    branches: [staging, main]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+permissions:
+  contents: read
+env:
+  RELEASE_BUILD_SHA: ${{ github.sha }}
+jobs:
+  development_screens:
+    name: Development screen ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [development]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - run: python -m pip install platformio==6.2.0
+      - run: python -m unittest discover -s scripts -p 'test_capture_screen.py'
+      - name: Compile development display capture (never upload)
+        working-directory: Software
+        env:
+          PIO_ENV: ${{ matrix.environment }}
+        run: pio run -e "$PIO_ENV" -t buildprog -j 2
+      - name: Verify development console inclusion
+        env:
+          PIO_ENV: ${{ matrix.environment }}
+        run: python scripts/check_screen_build.py --build-dir "Software/.pio/build/$PIO_ENV" --expect enabled
+  harness_tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r scripts/hil/requirements.txt
+      - run: python -m unittest discover -s scripts/hil -p 'test_*.py'
+  firmware:
+    name: Firmware ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - environment: staging
+            track: staging
+            variant: r8
+          - environment: production
+            track: production
+            variant: r8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - run: python -m pip install platformio==6.2.0
+      - name: Build firmware
+        working-directory: Software
+        env:
+          PIO_ENV: ${{ matrix.environment }}
+        run: pio run -e "$PIO_ENV" -j 2
+      - name: Verify development console inclusion
+        env:
+          PIO_ENV: ${{ matrix.environment }}
+        run: python scripts/check_screen_build.py --build-dir "Software/.pio/build/$PIO_ENV" --expect disabled
+      - name: Build the filesystem paired with this firmware
+        working-directory: Software
+        env:
+          PIO_ENV: ${{ matrix.environment }}
+        run: pio run -e "$PIO_ENV" -t buildfs
+      - name: Package the exact staging images
+        if: matrix.track == 'staging'
+        env:
+          PIO_ENV: ${{ matrix.environment }}
+          VARIANT: ${{ matrix.variant }}
+        run: >-
+          python scripts/hil/bundle.py --repository "$GITHUB_REPOSITORY"
+          --build-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          --variant "$VARIANT" --build-dir "Software/.pio/build/$PIO_ENV" --output hardware-parts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: matrix.track == 'staging'
+        with:
+          name: hardware-parts-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.variant }}
+          path: hardware-parts/
+          if-no-files-found: error
+          retention-days: 14
+  prepare_hardware:
+    needs: firmware
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: hardware-parts-${{ github.sha }}-${{ github.run_attempt }}-*
+          merge-multiple: true
+          path: hardware-bundle
+      - name: Verify every staging variant belongs to this run
+        run: >-
+          python scripts/hil/bundle.py --merge --repository "$GITHUB_REPOSITORY"
+          --build-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          --output hardware-bundle
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hardware-firmware-${{ github.sha }}-${{ github.run_attempt }}
+          path: hardware-bundle/
+          if-no-files-found: error
+          retention-days: 14
+  build_required:
+    name: Build validation
+    if: always()
+    needs: [harness_tests, firmware, prepare_hardware, development_screens]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every build and manifest validation
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python - <<'PY'
+          import json, os
+          failed = [name for name, job in json.loads(os.environ['RESULTS']).items() if job['result'] != 'success']
+          if failed:
+              raise SystemExit('Required jobs did not pass: ' + ', '.join(failed))
+          PY
+  hardware:
+    needs: build_required
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Use the exact reviewed wrapper commit allowed by the runner group.
+    # Runner-group access is restricted to this full workflow path and ref.
+    uses: researchanddesire/radr-wireless-remote/.github/workflows/hardware-run.yml@a5fd9f312a870003cbe4ee0551c77ae955eb8e82
+  hardware_required:
+    name: Hardware validation
+    if: always()
+    needs: [build_required, hardware]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject skipped, missing, cancelled, or failed hardware validation
+        env:
+          BUILD_RESULT: ${{ needs.build_required.result }}
+          HARDWARE_RESULT: ${{ needs.hardware.result }}
+        run: |
+          test "$BUILD_RESULT" = success
+          test "$HARDWARE_RESULT" = success

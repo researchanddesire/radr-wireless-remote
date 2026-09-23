@@ -22,3 +22,21 @@
 
 - Keep stable eFuse identity, update protocol, filesystem/application ordering, and rollback behavior covered by native tests.
 - Never commit credentials, local build products, or generated secrets.
+
+## PR hardware validation
+
+- Every PR into staging or main builds all hardware variants, including docs-only changes.
+- Install the exact staging bundle for the PR merge SHA; production still builds.
+- Require Build validation and Hardware validation in addition to existing checks.
+- Firmware bundles and hardware evidence are Actions artifacts, never tracked files.
+- The reviewed harness and fixture inventory live outside the runner work directory.
+- Never infer product identity or flash capacity from a COM port or advertising name.
+- Follow scripts/hil/README.md for enrollment, shared-device locks, and rollout.
+- Keep Wi-Fi credentials, fixture identities, and raw device logs outside the repository.
+- A missing device or incomplete three-minute observation must fail validation.
+
+## Development display capture
+
+- Development builds expose the read-only USB `screen` command; staging and production omit it.
+- Follow docs/development-screen-capture.md; use the display mutex for snapshots and keep serial transmission outside it.
+- Preserve the capture mirror when adding TFT bulk drawing paths. Keep capture files outside Git.

@@ -12,3 +12,17 @@ env.Append(
         )
     ]
 )
+
+# Staging hardware observation uses the ordinary application and normal updates.
+profile = env.subst("$PIOENV")
+if profile == "staging" or profile.startswith("staging-"):
+    variant = profile.split("-", 1)[1] if "-" in profile else "r8"
+    env.Append(CPPDEFINES=[
+        "RAD_HIL_TLS_PSRAM",
+        ("RAD_HIL_PRODUCT", env.StringifyMacro("radr")),
+        ("RAD_HIL_VARIANT", env.StringifyMacro(variant)),
+    ])
+
+# Development screen rows and SDK logs share the serial writer.
+if env.subst("$PIOENV").startswith("development") and "espidf" in env.get("PIOFRAMEWORK", []):
+    env.Append(LINKFLAGS=["-Wl,--wrap=log_printf"])

@@ -1,0 +1,90 @@
+name: Reviewed hardware runner
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  authorize:
+    # Explicit failure prevents a skipped reusable job from appearing successful.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a reviewed internal PR context
+        env:
+          ALLOWED: >-
+            ${{ github.event_name == 'pull_request' &&
+                github.repository == 'researchanddesire/radr-wireless-remote' &&
+                github.event.pull_request.head.repo.full_name == github.repository &&
+                (github.base_ref == 'staging' || github.base_ref == 'main') }}
+        run: test "$ALLOWED" = true
+  validate:
+    needs: authorize
+    # No caller-controlled command, repository, SHA, path, or runner inputs.
+    runs-on:
+      group: rad-firmware-validation
+      labels: [self-hosted, Windows, lkbx-rig-01, rad-hil]
+    timeout-minutes: 20
+    # The single worker queues every PR; no concurrency group replaces pending
+    # jobs or cancels flashing. The installed harness also takes OS family locks.
+    steps:
+      # Never check out a PR or execute an artifact on the persistent host.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        id: firmware
+        with:
+          name: hardware-firmware-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/rad-${{ github.run_id }}-${{ github.run_attempt }}/bundle
+      - name: Verify identities, flash approved regions, and observe every target
+        id: test
+        shell: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {0}
+        env:
+          RUN_DIRECTORY: ${{ runner.temp }}/rad-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $env:RUN_DIRECTORY 'evidence'
+          New-Item -ItemType Directory -Force -Path $evidence | Out-Null
+          $testExitCode = 1
+          Start-Transcript -Path (Join-Path $evidence 'harness.log')
+          try {
+            # Fixed reviewed installation, outside runner work directories.
+            $ErrorActionPreference = 'Continue'
+            & 'C:\rad-hil\venv\Scripts\python.exe' -I -u 'C:\rad-hil\harness\launch.py' `
+              --repository $env:GITHUB_REPOSITORY --build-sha $env:GITHUB_SHA `
+              --run-id $env:GITHUB_RUN_ID --run-attempt $env:GITHUB_RUN_ATTEMPT `
+              --bundle (Join-Path $env:RUN_DIRECTORY 'bundle') `
+              --fixture 'C:\rad-hil\fixture.json' --lock-directory 'C:\rad-hil\locks' `
+              --output (Join-Path $evidence 'results') 2>&1 | Out-Host
+            if ($null -ne $LASTEXITCODE) { $testExitCode = $LASTEXITCODE }
+          } catch {
+            Write-Output "Harness could not run: $($_.Exception.Message)"
+          } finally {
+            Stop-Transcript
+          }
+          exit $testExitCode
+      - name: Save workflow diagnostics after success or failure
+        if: always()
+        shell: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {0}
+        env:
+          RUN_DIRECTORY: ${{ runner.temp }}/rad-${{ github.run_id }}-${{ github.run_attempt }}
+          DOWNLOAD_OUTCOME: ${{ steps.firmware.outcome }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          $evidence = Join-Path $env:RUN_DIRECTORY 'evidence'
+          New-Item -ItemType Directory -Force -Path $evidence | Out-Null
+          @{
+            repository = $env:GITHUB_REPOSITORY
+            build_sha = $env:GITHUB_SHA
+            run_id = $env:GITHUB_RUN_ID
+            run_attempt = $env:GITHUB_RUN_ATTEMPT
+            firmware_download = $env:DOWNLOAD_OUTCOME
+            hardware_test = $env:TEST_OUTCOME
+          } | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $evidence 'workflow.json')
+          if (-not (Test-Path (Join-Path $evidence 'results\junit.xml'))) {
+            '<testsuite name="Hardware validation" tests="1" failures="1"><testcase name="harness-start"><failure message="Harness did not produce device evidence"/></testcase></testsuite>' |
+              Set-Content -Encoding UTF8 (Join-Path $evidence 'junit.xml')
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: hardware-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/rad-${{ github.run_id }}-${{ github.run_attempt }}/evidence/
+          if-no-files-found: error
+          retention-days: 30

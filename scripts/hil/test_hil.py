@@ -180,6 +180,7 @@ class HostTests(unittest.TestCase):
             write_verified('COM99', spec, MAC, Path('bundle'))
             self.assertIn('--no-stub', writer.call_args.args[0])
             self.assertIn('--compress', writer.call_args.args[0])
+            self.assertEqual(writer.call_args.args[0][writer.call_args.args[0].index('--after')+1], 'no_reset_stub')
             self.assertIs(writer.call_args.kwargs['esp'], connected)
             connected.run_stub.assert_called_once()
             self.assertEqual(connected.WRITE_FLASH_ATTEMPTS, 1)

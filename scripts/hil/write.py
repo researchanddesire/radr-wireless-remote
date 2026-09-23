@@ -43,7 +43,7 @@ def write_verified(port, spec, device_id, bundle, physical_flash_bytes=None, all
         saved_nvs = esp.read_flash(nvs[3], nvs[4])
         # The connected loader is already a stub. Without --no-stub esptool's
         # CLI uploads another copy over the resident helper before any write.
-        args = ['--chip', spec['chip'], '--port', port, '--baud', '460800', '--no-stub', '--after', 'no_reset',
+        args = ['--chip', spec['chip'], '--port', port, '--baud', '460800', '--no-stub', '--after', 'no_reset_stub',
                 'write_flash', '--compress', '--flash_mode', 'keep', '--flash_freq', 'keep', '--flash_size', 'keep']
         for filename, (offset, _) in regions(spec).items():
             if offset is not None:

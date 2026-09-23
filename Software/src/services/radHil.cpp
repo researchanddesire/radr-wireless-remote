@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstring>
 #include <cstdio>
+#include <time.h>
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
 #include <esp_idf_version.h>
@@ -52,11 +53,21 @@ unsigned long long uptimeMs() {
 }
 
 bool checkInternet() {
+    // TLS certificate dates require a synchronized clock. Some products do
+    // not initialize SNTP during ordinary idle startup, so the staging-only
+    // observer requests it once and waits without weakening verification.
+    static bool clockRequested = false;
+    if (time(nullptr) < 1704067200) {
+        if (!clockRequested) {
+            configTime(0, 0, "time.cloudflare.com", "pool.ntp.org");
+            clockRequested = true;
+        }
+        return false;
+    }
     // A read-only request with full certificate/hostname validation. Never
     // follow a redirect to a different environment or send device credentials.
 #if defined(RAD_HIL_ARDUINO_HTTP)
     // Reuse the Trainer's existing HTTP stack to retain its small OTA slot.
-    if (time(nullptr) < 1704067200) return false;
     extern const uint8_t bundleStart[] asm("_binary_x509_crt_bundle_start");
 #if defined(RAD_HIL_CERTIFICATE_DATE_CLIENT)
     // Preserve the public Trainer's SDK certificate-date hardening.

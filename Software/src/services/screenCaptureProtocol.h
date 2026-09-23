@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include "screenCaptureLogging.h"
+#include "serialIdentity.h"
 
 namespace screenCapture {
 struct Source {
@@ -63,51 +64,35 @@ inline void transmit(const Source& source, const void* snapshot, uint32_t id) {
         error(source, "serial_write");
 }
 
-inline void console(void* arg) {
-    const auto& source = *static_cast<const Source*>(arg);
-    char command[16]{};
-    size_t used = 0;
-    bool overflow = false;
-    void* snapshot = nullptr;
-    uint32_t snapshotId = 0;
-    uint32_t lastRequest = 0;
-    for (;;) {
-        while (Serial.available()) {
-            const int c = Serial.read();
-            if (c < 0) break;
-            if (c == '\n') {
-                command[used] = '\0';
-                if (!overflow && strcmp(command, "screen") == 0) {
-                    free(snapshot);
-                    const char* reason = "unavailable";
-                    snapshot = source.copy(reason);
-                    snapshotId = millis();
-                    if (snapshot) transmit(source, snapshot, snapshotId);
-                    else error(source, reason);
-                    lastRequest = millis();
-                } else if (!overflow && strcmp(command, "screen retry") == 0) {
-                    // Retransmit the original pixels even while the UI changes.
-                    // Never keep the display mutex during transfer or retention.
-                    if (snapshot) transmit(source, snapshot, snapshotId);
-                    else error(source, "no_snapshot");
-                    lastRequest = millis();
-                } else if (!overflow && strcmp(command, "screen release") == 0) {
-                    free(snapshot);
-                    snapshot = nullptr;
-                }
-                used = 0;
-                overflow = false;
-            } else if (c != '\r' && !overflow) {
-                if (used < sizeof(command) - 1) command[used++] = char(c);
-                else overflow = true; // Discard the whole overlong command.
-            }
-        }
-        // A disconnected console cannot retain capture memory indefinitely.
-        if (snapshot && millis() - lastRequest >= 90000) {
-            free(snapshot);
-            snapshot = nullptr;
-        }
-        vTaskDelay(pdMS_TO_TICKS(20));
+inline const Source* activeSource = nullptr;
+inline void* snapshot = nullptr;
+inline uint32_t snapshotId = 0;
+inline uint32_t lastRequest = 0;
+
+inline void command(const char* text) {
+    const auto& source = *activeSource;
+    if (strcmp(text, "screen") == 0) {
+        free(snapshot);
+        const char* reason = "unavailable";
+        snapshot = source.copy(reason);
+        snapshotId = millis();
+        if (snapshot) transmit(source, snapshot, snapshotId);
+        else error(source, reason);
+        lastRequest = millis();
+    } else if (strcmp(text, "screen retry") == 0) {
+        if (snapshot) transmit(source, snapshot, snapshotId);
+        else error(source, "no_snapshot");
+        lastRequest = millis();
+    } else if (strcmp(text, "screen release") == 0) {
+        free(snapshot);
+        snapshot = nullptr;
+    }
+}
+
+inline void poll() {
+    if (snapshot && millis() - lastRequest >= 90000) {
+        free(snapshot);
+        snapshot = nullptr;
     }
 }
 
@@ -118,9 +103,8 @@ inline void start(const Source& source) {
         error(source, "dimensions");
         return;
     }
-    if (xTaskCreate(console, "screenCapture", 6144,
-                    const_cast<Source*>(&source), 1, nullptr) != pdPASS)
-        error(source, "console_task");
+    activeSource = &source;
+    setSerialDevelopmentHandler(command, poll);
 }
 } // namespace screenCapture
 #endif

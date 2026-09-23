@@ -26,3 +26,9 @@ if profile == "staging" or profile.startswith("staging-"):
 # Development screen rows and SDK logs share the serial writer.
 if env.subst("$PIOENV").startswith("development") and "espidf" in env.get("PIOFRAMEWORK", []):
     env.Append(LINKFLAGS=["-Wl,--wrap=log_printf"])
+
+# Model names describe this image's target, separate from measured physical RAM.
+import sys
+sys.path.insert(0, env.subst("$PROJECT_DIR"))
+from serial_identity_build import install as install_serial_identity
+install_serial_identity(env, "RADR")

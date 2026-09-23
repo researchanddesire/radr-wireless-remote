@@ -1,3 +1,4 @@
+#include "services/serialIdentity.h"
 #include <Arduino.h>
 #include "services/radHil.h"
 
@@ -41,7 +42,9 @@ extern "C" bool verifyRollbackLater() { return true; }
 #endif
 
 void setup() {
+    configureSerialIdentityUsb();
     Serial.begin(115200);
+    startSerialIdentity();
 
 #ifdef DEBUG
     delay(5000);

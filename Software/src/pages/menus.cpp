@@ -501,6 +501,8 @@ void drawDeviceListTask(void *pvParameters) {
     }
     
     while (isInCorrectState() && !deviceListTaskExitRequested) {
+        // The normal device picker is idle: no remote control is active.
+        radHilProgress(true);
         int rawEncoderValue = rightEncoder.readEncoder();
         currentOption = rawEncoderValue;
         

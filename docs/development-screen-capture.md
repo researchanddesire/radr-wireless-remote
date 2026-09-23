@@ -28,8 +28,10 @@ Windows and with piped commands. A single capture makes at most three requests a
 
 The tool saves a PNG, little-endian RGB565 buffer, and JSON dimensions/checksums.
 Rows carry a snapshot ID and RLE pixels; the complete frame must match the
-device's FNV-1a checksum. Stale, duplicate or corrupted rows cannot produce an unchecked image. If logs
-interrupt a transfer, another snapshot is requested. Only snapshots with the same
+device's FNV-1a checksum. Stale, duplicate or corrupted rows cannot produce an unchecked image. If USB drops bytes or logs
+interrupt a transfer, screen retry retransmits the retained snapshot, even while
+the UI changes. The reader releases it after success; an abandoned snapshot
+expires after 90 seconds. Only snapshots with the same
 product, dimensions and complete-image checksum can supply missing rows; the
 combined pixels must still pass the checksum. Changed images never mix. Unrelated
 device logs are ignored and never saved. Exhausted retries fail without saving.

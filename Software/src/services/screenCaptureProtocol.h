@@ -21,11 +21,7 @@ inline void error(const Source& source, const char* reason) {
     Serial.printf("\n%s_SCREEN_ERROR %s\n", source.product, reason);
 }
 
-inline void dump(const Source& source) {
-    const char* reason = "unavailable";
-    void* snapshot = source.copy(reason);
-    if (!snapshot) { error(source, reason); return; }
-    const uint32_t id = millis();
+inline void transmit(const Source& source, const void* snapshot, uint32_t id) {
     uint32_t hash = 2166136261u;
     for (int y = 0; y < source.height; ++y) {
         for (int x = 0; x < source.width; ++x) {
@@ -59,7 +55,6 @@ inline void dump(const Source& source) {
         }
         vTaskDelay(pdMS_TO_TICKS(1));
     }
-    free(snapshot);
     if (complete)
         Serial.printf("%s_SCREEN_END %lu\n", source.product, static_cast<unsigned long>(id));
     else
@@ -71,19 +66,44 @@ inline void console(void* arg) {
     char command[16]{};
     size_t used = 0;
     bool overflow = false;
+    void* snapshot = nullptr;
+    uint32_t snapshotId = 0;
+    uint32_t lastRequest = 0;
     for (;;) {
         while (Serial.available()) {
             const int c = Serial.read();
             if (c < 0) break;
             if (c == '\n') {
                 command[used] = '\0';
-                if (!overflow && strcmp(command, "screen") == 0) dump(source);
+                if (!overflow && strcmp(command, "screen") == 0) {
+                    free(snapshot);
+                    const char* reason = "unavailable";
+                    snapshot = source.copy(reason);
+                    snapshotId = millis();
+                    if (snapshot) transmit(source, snapshot, snapshotId);
+                    else error(source, reason);
+                    lastRequest = millis();
+                } else if (!overflow && strcmp(command, "screen retry") == 0) {
+                    // Retransmit the original pixels even while the UI changes.
+                    // Never keep the display mutex during transfer or retention.
+                    if (snapshot) transmit(source, snapshot, snapshotId);
+                    else error(source, "no_snapshot");
+                    lastRequest = millis();
+                } else if (!overflow && strcmp(command, "screen release") == 0) {
+                    free(snapshot);
+                    snapshot = nullptr;
+                }
                 used = 0;
                 overflow = false;
             } else if (c != '\r' && !overflow) {
                 if (used < sizeof(command) - 1) command[used++] = char(c);
                 else overflow = true; // Discard the whole overlong command.
             }
+        }
+        // A disconnected console cannot retain capture memory indefinitely.
+        if (snapshot && millis() - lastRequest >= 90000) {
+            free(snapshot);
+            snapshot = nullptr;
         }
         vTaskDelay(pdMS_TO_TICKS(20));
     }

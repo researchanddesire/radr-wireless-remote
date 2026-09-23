@@ -111,6 +111,18 @@ class CaptureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Incomplete'):
             decoder.feed(second[-1])
 
+    def test_retransmission_retains_snapshot_identity(self):
+        records, raw = self.records(identity=42)
+        decoder = Decoder(recover=True)
+        for line in records[:33]:
+            decoder.feed(line)
+        with self.assertRaisesRegex(ValueError, 'Incomplete'):
+            decoder.feed(records[-1])
+        for line in records[:1] + records[33:]:
+            result = decoder.feed(line)
+        self.assertEqual(result[0]['id'], 42)
+        self.assertEqual(result[1], raw)
+
 
 if __name__ == '__main__':
     unittest.main()

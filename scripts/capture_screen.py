@@ -206,6 +206,7 @@ def main():
                     result = decoder.feed(line)
                     if result:
                         image = save_frame(args.output_dir, pending[0], result)
+                        connection.write(b'screen release\n')
                         print(f'Verified {result[0]["width"]}x{result[0]["height"]}: {image}', flush=True)
                         pending = None
                         if args.name:
@@ -214,8 +215,8 @@ def main():
                     if (str(error) in ('Incomplete frame', 'Framebuffer checksum mismatch')
                             and pending[2] < 3 and time.monotonic() < pending[1]):
                         pending = (pending[0], pending[1], pending[2] + 1)
-                        print('Incomplete/corrupt transfer; requesting another snapshot.', flush=True)
-                        connection.write(b'screen\n')
+                        print('Incomplete/corrupt transfer; retransmitting the retained snapshot.', flush=True)
+                        connection.write(b'screen retry\n')
                         continue
                     print(f'Capture rejected: {error}; no image saved.', flush=True)
                     pending = None

@@ -34,3 +34,9 @@
 - Follow scripts/hil/README.md for enrollment, shared-device locks, and rollout.
 - Keep Wi-Fi credentials, fixture identities, and raw device logs outside the repository.
 - A missing device or incomplete three-minute observation must fail validation.
+
+## Development display capture
+
+- Development builds expose the read-only USB `screen` command; staging and production omit it.
+- Follow docs/development-screen-capture.md; use the display mutex for snapshots and keep serial transmission outside it.
+- Preserve the capture mirror when adding TFT bulk drawing paths. Keep capture files outside Git.

@@ -7,3 +7,6 @@
 scratch
 .github/scripts/__pycache__/
 *.pyc
+
+# Local development display captures
+captures/

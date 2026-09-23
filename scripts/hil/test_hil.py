@@ -166,6 +166,35 @@ class MonitorTests(unittest.TestCase):
 
 
 class HostTests(unittest.TestCase):
+    def test_verified_connection_is_reused_without_loading_a_second_stub(self):
+        spec = policy('researchanddesire/DT_Trainer', 'v1')
+        connected = MagicMock()
+        connected.run_stub.return_value = connected
+        connected.CHIP_NAME = 'ESP32'
+        connected.read_mac.return_value = bytes.fromhex(MAC)
+        connected.flash_id.return_value = 22 << 16
+        connected.read_flash.return_value = b''.join(
+            struct.pack('<HBBII16sI', 0x50aa, row[1], row[2], row[3], row[4], row[0].encode(), 0)
+            for row in spec['partitions'])+b'\xff'*32
+        with patch('write.esptool.detect_chip', return_value=connected), patch('write.esptool.main') as writer:
+            write_verified('COM99', spec, MAC, Path('bundle'))
+            self.assertIn('--no-stub', writer.call_args.args[0])
+            self.assertIn('--compress', writer.call_args.args[0])
+            self.assertIs(writer.call_args.kwargs['esp'], connected)
+            connected.run_stub.assert_called_once()
+            self.assertEqual(connected.WRITE_FLASH_ATTEMPTS, 1)
+
+    def test_nvs_change_after_write_fails_validation(self):
+        spec = policy('researchanddesire/DT_Trainer', 'v1')
+        connected = MagicMock()
+        connected.run_stub.return_value = connected
+        connected.read_flash.side_effect = [b'preserved identity', b'changed identity']
+        with patch('write.esptool.detect_chip', return_value=connected), \
+             patch('write.verify_connected'), patch('write.esptool.main'):
+            with self.assertRaisesRegex(RuntimeError, 'NVS changed'):
+                write_verified('COM99', spec, MAC, Path('bundle'))
+        connected._port.close.assert_called_once()
+
     def test_larger_trainer_requires_explicit_enrollment_exception(self):
         spec = policy('researchanddesire/DT_Trainer', 'v1')
         self.assertFalse(physical_flash_allowed(spec, 16777216))

@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include <atomic>
 #include <cstring>
+#include <cstdio>
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
 #include <esp_idf_version.h>
@@ -115,7 +116,7 @@ void observeTask(void*) {
         applicationReady = applicationReady && mqttConnected && mqtt_server != nullptr &&
             std::strcmp(mqtt_server, "mqtts://x15ff600.ala.us-east-1.emqxsl.com") == 0;
 #endif
-        esp_log_write(ESP_LOG_INFO, "RadHil",
+        std::printf(
             "RAD_HEALTH {\"event\":\"heartbeat\",\"boot_id\":%lu,\"uptime_ms\":%llu,"
             "\"ready\":%s,\"app_age_ms\":%lu,\"wifi\":%s,\"bench_wifi\":%s,"
             "\"ip\":\"%s\",\"internet\":%s,\"network_age_ms\":%lu,\"disconnects\":%lu}\n",
@@ -142,12 +143,12 @@ void radHilStart() {
     uint8_t hash[32] = {};
     const auto partition = esp_ota_get_running_partition();
     if (!partition || esp_partition_get_sha256(partition, hash) != ESP_OK) {
-        esp_log_write(ESP_LOG_ERROR, "RadHil", "RAD_HEALTH invalid running image\n");
+        std::printf( "RAD_HEALTH invalid running image\n");
         return;
     }
     char imageHash[65];
     for (size_t i = 0; i < sizeof(hash); ++i) snprintf(imageHash+i*2, 3, "%02x", hash[i]);
-    esp_log_write(ESP_LOG_INFO, "RadHil",
+    std::printf(
         "RAD_HEALTH {\"event\":\"boot\",\"schema\":1,\"boot_id\":%lu,\"uptime_ms\":%llu,"
         "\"product\":\"%s\",\"variant\":\"%s\",\"device_id\":\"%s\",\"flash_bytes\":%lu,"
         "\"build_sha\":\"%s\",\"image_sha256\":\"%s\",\"track\":\"%s\"}\n",
@@ -157,7 +158,7 @@ void radHilStart() {
         disconnects.fetch_add(1, std::memory_order_relaxed);
     }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
     if (xTaskCreate(observeTask, "radHil", 10240, nullptr, 1, nullptr) != pdPASS) {
-        esp_log_write(ESP_LOG_ERROR, "RadHil", "RAD_HEALTH observer task creation failed\n");
+        std::printf( "RAD_HEALTH observer task creation failed\n");
     }
 }
 

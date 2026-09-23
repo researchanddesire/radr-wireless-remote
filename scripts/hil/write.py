@@ -36,14 +36,24 @@ def write_verified(port, spec, device_id, bundle, physical_flash_bytes=None, all
     try:
         esp = esp.run_stub()
         verify_connected(esp, spec, device_id, physical_flash_bytes)
-        args = ['--chip', spec['chip'], '--port', port, '--baud', '460800', '--after', 'no_reset',
-                'write_flash', '--flash_mode', 'keep', '--flash_freq', 'keep', '--flash_size', 'keep']
+        # Never let esptool reconnect and retry a failed write behind the
+        # fixture identity checks. A fresh reviewed run is required instead.
+        esp.WRITE_FLASH_ATTEMPTS = 1
+        nvs = next(row for row in spec['partitions'] if row[0] == 'nvs')
+        saved_nvs = esp.read_flash(nvs[3], nvs[4])
+        # The connected loader is already a stub. Without --no-stub esptool's
+        # CLI uploads another copy over the resident helper before any write.
+        args = ['--chip', spec['chip'], '--port', port, '--baud', '460800', '--no-stub', '--after', 'no_reset',
+                'write_flash', '--compress', '--flash_mode', 'keep', '--flash_freq', 'keep', '--flash_size', 'keep']
         for filename, (offset, _) in regions(spec).items():
             if offset is not None:
                 args.extend([hex(offset), str(bundle/filename)])
         # esptool 4.11's esp argument reuses this already-connected loader.
         # There is no reopen/reset gap in which a different USB device can enter.
         esptool.main(args, esp=esp)
+        if esp.read_flash(nvs[3], nvs[4]) != saved_nvs:
+            raise RuntimeError('NVS changed while flashing; fixture requires recovery')
+        print('NVS preservation verified before application restart.', flush=True)
     finally:
         esp._port.close()
 

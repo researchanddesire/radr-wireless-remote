@@ -40,3 +40,9 @@
 - Development builds expose the read-only USB `screen` command; staging and production omit it.
 - Follow docs/development-screen-capture.md; use the display mutex for snapshots and keep serial transmission outside it.
 - Preserve the capture mirror when adding TFT bulk drawing paths. Keep capture files outside Git.
+
+## Serial identity
+
+- All firmware tracks expose the read-only boot/`info` identity described in docs/serial-identity.md.
+- Keep one serial input reader; development screen commands register with it.
+- Report target memory and measured memory separately; a label never authorizes flashing or motion.

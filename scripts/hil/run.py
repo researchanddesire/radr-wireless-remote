@@ -147,6 +147,17 @@ def flash(port, spec, device, bundle, log):
 
 
 def safe_line(line):
+    # Staging Trainer diagnostics contain only fixed application state names.
+    states = {'init', 'init.idle', 'init.preflight', 'pairing', 'play',
+              'play.bad_health_check', 'play.begin', 'play.calibration.max',
+              'play.calibration.min', 'play.details.segment', 'play.details.session',
+              'play.details.toy', 'play.failed', 'play.fetchSettings', 'play.final',
+              'play.grade', 'play.idle', 'play.loadSettings', 'play.preflight',
+              'play.ready', 'play.threestrikes', 'provisioning', 'provisioning.done',
+              'provisioning.error', 'provisioning.update_error',
+              'provisioning.wifiSettings', 'update', 'wifiSettings'}
+    if line.startswith('RAD_STATE ') and line[10:] in states:
+        return line
     # Only the structured, credential-free health protocol is retained verbatim.
     # Normal firmware logs may contain request bodies, Wi-Fi keys or pairing codes.
     if PREFIX in line:

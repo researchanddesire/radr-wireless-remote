@@ -6,6 +6,8 @@
 #include <atomic>
 #include <cstring>
 #include <cstdio>
+#include <cstdarg>
+#include <esp_heap_caps.h>
 #include <time.h>
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
@@ -15,6 +17,9 @@
 #include <esp_partition.h>
 #include <esp_system.h>
 #include <esp_timer.h>
+#if defined(RAD_HIL_TLS_PSRAM)
+#include <mbedtls/platform.h>
+#endif
 #if __has_include("mqtt.h")
 #include "mqtt.h"
 #define RAD_HIL_LOCKBOX_MQTT
@@ -41,6 +46,19 @@ extern "C" esp_err_t esp_crt_bundle_attach(void *conf);
 #endif
 
 namespace {
+// One buffered serial write prevents concurrent task logs from splitting JSON.
+// The initial newline separates a record from a partial ordinary log message.
+void emitHealth(const char* format, ...) {
+    char frame[768];
+    frame[0] = '\n';
+    va_list arguments;
+    va_start(arguments, format);
+    const int count = vsnprintf(frame + 1, sizeof(frame) - 1, format, arguments);
+    va_end(arguments);
+    if (count > 0 && static_cast<size_t>(count) < sizeof(frame) - 1) {
+        Serial.write(reinterpret_cast<const uint8_t*>(frame), count + 1);
+    }
+}
 std::atomic<uint32_t> progressMs{0};
 std::atomic<bool> ready{false};
 std::atomic<uint32_t> disconnects{0};
@@ -127,7 +145,7 @@ void observeTask(void*) {
         applicationReady = applicationReady && mqttConnected && mqtt_server != nullptr &&
             std::strcmp(mqtt_server, "mqtts://x15ff600.ala.us-east-1.emqxsl.com") == 0;
 #endif
-        std::printf(
+        emitHealth(
             "RAD_HEALTH {\"event\":\"heartbeat\",\"boot_id\":%lu,\"uptime_ms\":%llu,"
             "\"ready\":%s,\"app_age_ms\":%lu,\"wifi\":%s,\"bench_wifi\":%s,"
             "\"ip\":\"%s\",\"internet\":%s,\"network_age_ms\":%lu,\"disconnects\":%lu}\n",
@@ -145,6 +163,15 @@ void observeTask(void*) {
 
 void radHilStart() {
     if (bootId != 0) return;
+#if defined(RAD_HIL_TLS_PSRAM)
+    // Configure the standard mbedTLS allocator before any network tasks start.
+    // TLS authentication is unchanged; verified R8 PSRAM holds its heap buffers.
+    if (psramFound()) {
+        mbedtls_platform_set_calloc_free([](size_t count, size_t size) -> void* {
+            return heap_caps_calloc(count, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        }, heap_caps_free);
+    }
+#endif
     bootId = esp_random();
     if (bootId == 0) bootId = 1;
     uint8_t mac[6] = {};
@@ -154,12 +181,12 @@ void radHilStart() {
     uint8_t hash[32] = {};
     const auto partition = esp_ota_get_running_partition();
     if (!partition || esp_partition_get_sha256(partition, hash) != ESP_OK) {
-        std::printf( "RAD_HEALTH invalid running image\n");
+        emitHealth( "RAD_HEALTH invalid running image\n");
         return;
     }
     char imageHash[65];
     for (size_t i = 0; i < sizeof(hash); ++i) snprintf(imageHash+i*2, 3, "%02x", hash[i]);
-    std::printf(
+    emitHealth(
         "RAD_HEALTH {\"event\":\"boot\",\"schema\":1,\"boot_id\":%lu,\"uptime_ms\":%llu,"
         "\"product\":\"%s\",\"variant\":\"%s\",\"device_id\":\"%s\",\"flash_bytes\":%lu,"
         "\"build_sha\":\"%s\",\"image_sha256\":\"%s\",\"track\":\"%s\"}\n",
@@ -169,7 +196,7 @@ void radHilStart() {
         disconnects.fetch_add(1, std::memory_order_relaxed);
     }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
     if (xTaskCreate(observeTask, "radHil", 10240, nullptr, 1, nullptr) != pdPASS) {
-        std::printf( "RAD_HEALTH observer task creation failed\n");
+        emitHealth( "RAD_HEALTH observer task creation failed\n");
     }
 }
 

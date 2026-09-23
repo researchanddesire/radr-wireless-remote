@@ -18,6 +18,7 @@ profile = env.subst("$PIOENV")
 if profile == "staging" or profile.startswith("staging-"):
     variant = profile.split("-", 1)[1] if "-" in profile else "r8"
     env.Append(CPPDEFINES=[
+        "RAD_HIL_TLS_PSRAM",
         ("RAD_HIL_PRODUCT", env.StringifyMacro("radr")),
         ("RAD_HIL_VARIANT", env.StringifyMacro(variant)),
     ])

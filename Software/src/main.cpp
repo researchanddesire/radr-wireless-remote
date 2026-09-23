@@ -42,7 +42,6 @@ extern "C" bool verifyRollbackLater() { return true; }
 
 void setup() {
     Serial.begin(115200);
-    radHilStart();
 
 #ifdef DEBUG
     delay(5000);
@@ -56,6 +55,7 @@ void setup() {
     }
 
     ESP_LOGD(TAG, "PSRAM found: %d", psramFound());
+    radHilStart();
 
     // init buttons
     leftShoulderBtn = OneButton(pins::BTN_L_SHOULDER, true, true);

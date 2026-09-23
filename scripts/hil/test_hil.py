@@ -215,6 +215,8 @@ class HostTests(unittest.TestCase):
             connected._port.close.assert_called_once()
 
     def test_sensitive_unstructured_logs_are_redacted(self):
+        self.assertEqual(safe_line('RAD_STATE pairing'), 'RAD_STATE pairing')
+        self.assertNotIn('secret-value', safe_line('RAD_STATE secret-value'))
         self.assertNotIn('secret-value', safe_line('password=secret-value'))
         self.assertNotIn('secret-value', safe_line('RAD_HEALTH {"password":"secret-value"}'))
         for key in ('event', 'build_sha', 'uptime_ms', 'ip', 'ready'):

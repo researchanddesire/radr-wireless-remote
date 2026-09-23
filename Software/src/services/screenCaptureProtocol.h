@@ -6,6 +6,7 @@
 #include <Arduino.h>
 #include <cstdlib>
 #include <cstring>
+#include "screenCaptureLogging.h"
 
 namespace screenCapture {
 struct Source {
@@ -89,6 +90,7 @@ inline void console(void* arg) {
 }
 
 inline void start(const Source& source) {
+    startScreenCaptureLogging();
     // Source must have static lifetime; the current products are 128x64/320x240.
     if (source.width < 1 || source.width > 320 || source.height < 1 || source.height > 240) {
         error(source, "dimensions");

@@ -24,18 +24,21 @@ python scripts/capture_screen.py --port COM_PORT --product RADR --output-dir cap
 Replace COM_PORT with the verified device port. Opening serial can reset some
 boards; use `--startup-delay 10` if needed. Omit `--name` to keep one connection
 open while navigating normally; type `capture menu` or `quit`. This works on
-Windows and with piped commands. A single capture times out after 90 seconds.
+Windows and with piped commands. A single capture makes at most three requests and times out after 90 seconds.
 
 The tool saves a PNG, little-endian RGB565 buffer, and JSON dimensions/checksums.
 Rows carry a snapshot ID and RLE pixels; the complete frame must match the
-device's FNV-1a checksum. Missing, stale, duplicate or corrupted rows are rejected
-without saving a new image. Unrelated device logs are ignored and never saved.
-If another task interrupts serial output, issue a new capture after the error.
+device's FNV-1a checksum. Stale, duplicate or corrupted rows cannot produce an unchecked image. If logs
+interrupt a transfer, another snapshot is requested. Only snapshots with the same
+product, dimensions and complete-image checksum can supply missing rows; the
+combined pixels must still pass the checksum. Changed images never mix. Unrelated
+device logs are ignored and never saved. Exhausted retries fail without saving.
 
 TFT firmware mirrors drawing operations, including fast bitmap writes, in PSRAM.
 OLED firmware copies its existing 1024-byte U8g2 buffer and translates its configured
 rotation into the logical UI view. The display mutex is held only while copying;
-serial transmission does not pause rendering. This captures the current pixel
+serial transmission does not pause rendering. Development SDK logs use the
+same serial writer to avoid splitting rows; ordinary and fault logs are retained. This captures the current pixel
 buffer, not backlight brightness, panel faults, or an optical photograph. It does
 not change product control protocols, pairing, calibration or saved credentials.
 

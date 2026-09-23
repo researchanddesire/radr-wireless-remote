@@ -84,6 +84,33 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(commands.get_nowait(), 'capture screen')
         self.assertEqual(commands.get_nowait(), 'quit')
 
+    def test_same_snapshot_recovers_missing_rows(self):
+        first, raw = self.records(identity=1)
+        second, _ = self.records(identity=2)
+        decoder = Decoder(recover=True)
+        for line in first[:33]:
+            decoder.feed(line)
+        decoder.feed('DTT_SCREEN_ROW 1 33 080ffff interrupted log')
+        with self.assertRaisesRegex(ValueError, 'Incomplete'):
+            decoder.feed(first[-1])
+        result = None
+        for line in second[:1] + second[33:]:
+            result = decoder.feed(line)
+        self.assertEqual(result[1], raw)
+
+    def test_recovery_cannot_mix_changed_images(self):
+        first, _ = self.records(identity=1)
+        second, _ = self.records(identity=2, color=0)
+        decoder = Decoder(recover=True)
+        for line in first[:33]:
+            decoder.feed(line)
+        with self.assertRaisesRegex(ValueError, 'Incomplete'):
+            decoder.feed(first[-1])
+        for line in second[:1] + second[33:-1]:
+            decoder.feed(line)
+        with self.assertRaisesRegex(ValueError, 'Incomplete'):
+            decoder.feed(second[-1])
+
 
 if __name__ == '__main__':
     unittest.main()

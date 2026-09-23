@@ -58,9 +58,11 @@ def decode_row(encoded, width):
 
 
 class Decoder:
-    def __init__(self, product=None):
+    def __init__(self, product=None, recover=False):
         self.product = product
         self.frame = None
+        self.recover = recover
+        self.snapshots = {}
 
     def feed(self, line):
         match = RECORD.search(line.strip())
@@ -80,8 +82,13 @@ class Decoder:
             identity, width, height = map(int, fields[:3])
             if (width, height) != PRODUCT_SIZES[product]:
                 raise ValueError('Unexpected framebuffer dimensions')
+            checksum = int(fields[3], 16)
+            key = (product, width, height, checksum)
+            if key not in self.snapshots and len(self.snapshots) >= 3:
+                self.snapshots.pop(next(iter(self.snapshots)))
+            rows = self.snapshots.setdefault(key, {}) if self.recover else {}
             self.frame = {'product': product, 'id': identity, 'width': width, 'height': height,
-                          'fnv1a': int(fields[3], 16), 'rows': {}}
+                          'fnv1a': checksum, 'rows': rows, 'seen': set()}
             return None
         frame = self.frame
         if not frame or frame['product'] != product:
@@ -90,19 +97,29 @@ class Decoder:
             return None
         if kind == 'ROW':
             if len(fields) != 3 or not fields[1].isdigit():
+                if self.recover:
+                    return None # Logs may interrupt the row's framing too.
                 raise ValueError('Malformed frame row')
             row = int(fields[1])
-            if not 0 <= row < frame['height'] or row in frame['rows']:
+            if not 0 <= row < frame['height'] or row in frame['seen']:
                 raise ValueError('Duplicate or out-of-range row')
-            frame['rows'][row] = decode_row(fields[2], frame['width'])
+            try:
+                pixels = decode_row(fields[2], frame['width'])
+            except ValueError:
+                if self.recover:
+                    return None # A log-interrupted row may be recovered later.
+                raise
+            frame['rows'][row] = pixels
+            frame['seen'].add(row)
         elif kind == 'END':
             self.frame = None
             if len(fields) != 1 or len(frame['rows']) != frame['height']:
                 raise ValueError('Incomplete frame')
             raw = b''.join(frame['rows'][y] for y in range(frame['height']))
             if fnv1a(raw) != frame['fnv1a']:
+                frame['rows'].clear()
                 raise ValueError('Framebuffer checksum mismatch')
-            return {key: value for key, value in frame.items() if key != 'rows'}, raw
+            return {key: value for key, value in frame.items() if key not in ('rows', 'seen')}, raw
         return None
 
 
@@ -149,7 +166,7 @@ def main():
         threading.Thread(target=stdin_reader, args=(commands,), daemon=True).start()
         print('Wait for boot, then type: capture NAME; quit closes the console.', flush=True)
     pending = None
-    decoder = Decoder(args.product)
+    decoder = Decoder(args.product, recover=True)
     buffered = bytearray()
     discard_line = False
     with connection:
@@ -164,8 +181,8 @@ def main():
                 if command.startswith('capture ') and not pending:
                     label = command[8:]
                     if re.fullmatch(r'[a-zA-Z0-9_-]{1,60}', label):
-                        pending = (label, time.monotonic() + 90)
-                        decoder = Decoder(args.product)
+                        pending = (label, time.monotonic() + 90, 1)
+                        decoder = Decoder(args.product, recover=True)
                         connection.write(b'screen\n')
                     else:
                         print('Invalid filename label.', flush=True)
@@ -194,15 +211,21 @@ def main():
                         if args.name:
                             return 0
                 except ValueError as error:
+                    if (str(error) in ('Incomplete frame', 'Framebuffer checksum mismatch')
+                            and pending[2] < 3 and time.monotonic() < pending[1]):
+                        pending = (pending[0], pending[1], pending[2] + 1)
+                        print('Incomplete/corrupt transfer; requesting another snapshot.', flush=True)
+                        connection.write(b'screen\n')
+                        continue
                     print(f'Capture rejected: {error}; no image saved.', flush=True)
                     pending = None
-                    decoder = Decoder(args.product)
+                    decoder = Decoder(args.product, recover=True)
                     if args.name:
                         return 2
             if pending and time.monotonic() > pending[1]:
                 print('Capture timed out; no image saved.', flush=True)
                 pending = None
-                decoder = Decoder(args.product)
+                decoder = Decoder(args.product, recover=True)
                 if args.name:
                     return 2
     return 2 if args.name or pending else 0

@@ -9,9 +9,6 @@
 #include "DisplayObject.h"
 #include "../services/display.h"
 
-extern Adafruit_ST7789 tft;
-extern SemaphoreHandle_t displayMutex;
-
 // Special constant to indicate no pin assignment (visual-only button)
 #define NO_PIN 255
 

@@ -22,3 +22,7 @@ if profile == "staging" or profile.startswith("staging-"):
         ("RAD_HIL_PRODUCT", env.StringifyMacro("radr")),
         ("RAD_HIL_VARIANT", env.StringifyMacro(variant)),
     ])
+
+# Development screen rows and SDK logs share the serial writer.
+if env.subst("$PIOENV").startswith("development") and "espidf" in env.get("PIOFRAMEWORK", []):
+    env.Append(LINKFLAGS=["-Wl,--wrap=log_printf"])

@@ -53,7 +53,9 @@ inline void transmit(const Source& source, const void* snapshot, uint32_t id) {
             complete = false;
             break;
         }
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // TFT rows can exceed 2 KiB. Let native USB and the host drain each
+        // row before another burst; capture runs independently of UI rendering.
+        vTaskDelay(pdMS_TO_TICKS(source.width > 128 ? 50 : 1));
     }
     if (complete)
         Serial.printf("%s_SCREEN_END %lu\n", source.product, static_cast<unsigned long>(id));

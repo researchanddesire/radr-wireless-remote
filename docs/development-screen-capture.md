@@ -24,7 +24,7 @@ python scripts/capture_screen.py --port COM_PORT --product RADR --output-dir cap
 Replace COM_PORT with the verified device port. Opening serial can reset some
 boards; use `--startup-delay 10` if needed. Omit `--name` to keep one connection
 open while navigating normally; type `capture menu` or `quit`. This works on
-Windows and with piped commands. A single capture makes at most three requests and times out after 90 seconds.
+Windows and with piped commands. A single capture makes at most three requests and times out after 90 seconds. TFT captures take about 12 seconds; the UI continues updating during transmission.
 
 The tool saves a PNG, little-endian RGB565 buffer, and JSON dimensions/checksums.
 Rows carry a snapshot ID and RLE pixels; the complete frame must match the

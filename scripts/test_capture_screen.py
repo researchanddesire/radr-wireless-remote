@@ -2,6 +2,10 @@ import io
 import queue
 import struct
 import unittest
+import tempfile
+import types
+import json
+from pathlib import Path
 from unittest.mock import patch
 
 from capture_screen import Decoder, decode_row, fnv1a, png_bytes, stdin_reader
@@ -122,6 +126,48 @@ class CaptureTests(unittest.TestCase):
             result = decoder.feed(line)
         self.assertEqual(result[0]['id'], 42)
         self.assertEqual(result[1], raw)
+
+
+    def test_windows_cli_handles_burst_with_maximum_rle_rows(self):
+        import capture_screen
+        raw = b'\xff\xff\x00\x00' * (160 * 240)
+        records = [f'LKBX_SCREEN_BEGIN 42 320 240 {capture_screen.fnv1a(raw):08x}']
+        records += [f'LKBX_SCREEN_ROW 42 {row} ' + '001ffff0010000' * 160
+                    for row in range(240)]
+        records += ['LKBX_SCREEN_END 42']
+        burst = ('x' * 6000 + '\n' + '\n'.join(records) + '\n').encode('ascii')
+
+        class Port:
+            def __init__(self):
+                self.data = b''
+                self.commands = []
+                self.buffers = None
+            def open(self): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def reset_input_buffer(self): self.data = b''
+            def set_buffer_size(self, **kwargs): self.buffers = kwargs
+            @property
+            def in_waiting(self): return len(self.data)
+            def read(self, size):
+                result, self.data = self.data[:size], self.data[size:]
+                return result
+            def write(self, data):
+                self.commands.append(data)
+                if data == b'\nscreen\n': self.data += burst
+                return len(data)
+
+        port = Port()
+        with tempfile.TemporaryDirectory() as directory:
+            argv = ['capture_screen.py', '--port', 'COM_TEST', '--product', 'LKBX',
+                    '--output-dir', directory, '--name', 'burst', '--startup-delay', '0']
+            with patch.dict('sys.modules', {'serial': types.SimpleNamespace(Serial=lambda **kwargs: port)}), \
+                    patch('sys.argv', argv), patch('sys.platform', 'win32'):
+                self.assertEqual(capture_screen.main(), 0)
+            self.assertEqual((Path(directory) / 'burst.rgb565').read_bytes(), raw)
+            self.assertEqual(json.loads((Path(directory) / 'burst.json').read_text())['id'], 42)
+        self.assertEqual(port.commands, [b'\nscreen\n', b'\nscreen release\n'])
+        self.assertEqual(port.buffers['rx_size'], 1024 * 1024)
 
 
 if __name__ == '__main__':

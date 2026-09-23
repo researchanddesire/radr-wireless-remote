@@ -159,6 +159,10 @@ def main():
     connection.dtr = connection.rts = False
     connection.port = args.port
     connection.open()
+    if sys.platform == 'win32':
+        # Native USB can burst an entire TFT frame faster than the Windows
+        # default receive queue is drained, especially during local builds.
+        connection.set_buffer_size(rx_size=1024 * 1024, tx_size=4096)
     commands = queue.Queue()
     if args.name:
         commands.put('capture ' + args.name)
@@ -183,22 +187,19 @@ def main():
                     if re.fullmatch(r'[a-zA-Z0-9_-]{1,60}', label):
                         pending = (label, time.monotonic() + 90, 1)
                         decoder = Decoder(args.product, recover=True)
-                        connection.write(b'screen\n')
+                        connection.write(b'\nscreen\n')
                     else:
                         print('Invalid filename label.', flush=True)
                 elif command:
                     print('Use capture NAME or quit. One capture at a time.', flush=True)
             data = connection.read(min(connection.in_waiting or 1, 4096))
-            for byte in data:
-                if byte != 10:
-                    if not discard_line:
-                        buffered.append(byte)
-                        if len(buffered) > 4096:
-                            buffered.clear()
-                            discard_line = True
-                    continue
-                line = buffered.decode('ascii', errors='replace') if not discard_line else ''
-                buffered.clear()
+            buffered.extend(data)
+            # Split chunks in C instead of iterating over every byte in Python;
+            # native USB can deliver long TFT rows faster than bytewise polling.
+            while b'\n' in buffered:
+                raw_line, _, remainder = buffered.partition(b'\n')
+                buffered = bytearray(remainder)
+                line = raw_line.decode('ascii', errors='replace') if not discard_line and len(raw_line) <= 4096 else ''
                 discard_line = False
                 if not pending:
                     continue
@@ -206,7 +207,7 @@ def main():
                     result = decoder.feed(line)
                     if result:
                         image = save_frame(args.output_dir, pending[0], result)
-                        connection.write(b'screen release\n')
+                        connection.write(b'\nscreen release\n')
                         print(f'Verified {result[0]["width"]}x{result[0]["height"]}: {image}', flush=True)
                         pending = None
                         if args.name:
@@ -216,13 +217,16 @@ def main():
                             and pending[2] < 3 and time.monotonic() < pending[1]):
                         pending = (pending[0], pending[1], pending[2] + 1)
                         print('Incomplete/corrupt transfer; retransmitting the retained snapshot.', flush=True)
-                        connection.write(b'screen retry\n')
+                        connection.write(b'\nscreen retry\n')
                         continue
                     print(f'Capture rejected: {error}; no image saved.', flush=True)
                     pending = None
                     decoder = Decoder(args.product, recover=True)
                     if args.name:
                         return 2
+            if len(buffered) > 4096:
+                buffered.clear()
+                discard_line = True
             if pending and time.monotonic() > pending[1]:
                 print('Capture timed out; no image saved.', flush=True)
                 pending = None

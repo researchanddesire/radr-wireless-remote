@@ -201,7 +201,8 @@ void initBLE() {
     pScan->setActiveScan(true);
 
     NimBLEServer *server = NimBLEDevice::createServer();
-    server->setCallbacks(&peripheralCallbacks);
+    // Static object: NimBLE must not delete it on deinit(true).
+    server->setCallbacks(&peripheralCallbacks, false);
     if (initRadBle(server)) {
         NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
         advertising->setName(deviceName.c_str());

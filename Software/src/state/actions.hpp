@@ -26,8 +26,11 @@
 #include "pages/TextPages.h"
 #include "pages/controller.h"
 #include "pages/menus.h"
+#include "devices/researchAndDesire/ossm/ossm_state.h"
 #include "pages/ossmUpdate.h"
 #include "pages/pairing.h"
+#include "tasks/update.h"
+#include "utils/psramTask.h"
 #include "services/leftEncoderMonitor.h"
 
 // Forward declarations to avoid circular dependencies
@@ -40,6 +43,7 @@ void onScanComplete();
 
 // Defined in remote.cpp — breaks circular dependency with stateMachine type
 void fireStateMachineDoneEvent();
+void fireStateMachineTaskFailedEvent();
 
 namespace actions {
 
@@ -134,13 +138,19 @@ namespace actions {
         return [](BuzzerPattern pattern) { playBuzzerPattern(pattern); };
     };
 
+    // Starts a state-machine task on an internal-RAM stack. Creation is
+    // checked: on failure the screen says so and task_failed_event moves the
+    // machine on, so an out-of-memory condition is never a silent hang.
     inline constexpr auto startTask = [](auto task, const char *taskName,
-                                         TaskHandle_t handle, uint8_t size = 10,
+                                         TaskHandle_t *handle, uint8_t size = 10,
                                          uint8_t core = 1) {
-        return [task, taskName, handle, size, core]() mutable {
-            xTaskCreatePinnedToCore(task, taskName,
-                                    size * configMINIMAL_STACK_SIZE, nullptr, 1,
-                                    &handle, core);
+        return [task, taskName, handle, size, core]() {
+            if (createInternalTask(task, taskName,
+                                   size * configMINIMAL_STACK_SIZE, nullptr, 1,
+                                   handle, core) != pdPASS) {
+                updateStatusText(String("Out of memory: ") + taskName);
+                fireStateMachineTaskFailedEvent();
+            }
         };
     };
 
@@ -187,6 +197,7 @@ namespace actions {
     };
 
     inline auto drawMainMenu = []() {
+        stopOssmFollow();  // any OSSM pairing/update follow loop ends here
         // Release all individual LED controls back to global control
         releaseAllIndividualLeds();
         setLed(LEDColors::idle, 50,
@@ -238,10 +249,6 @@ namespace actions {
         }
     };
 
-    inline auto sendOssmUpdate = []() {
-        if (device == nullptr) return;
-        device->onUpdate();
-    };
 
     inline TimerHandle_t ossmUpdateTimer = nullptr;
 
@@ -249,7 +256,7 @@ namespace actions {
         if (ossmUpdateTimer != nullptr) {
             xTimerDelete(ossmUpdateTimer, 0);
         }
-        ossmUpdateTimer = xTimerCreate("ossmUpdate", pdMS_TO_TICKS(90000),
+        ossmUpdateTimer = xTimerCreate("ossmUpdate", pdMS_TO_TICKS(180000),
                                        pdFALSE, nullptr, [](TimerHandle_t) {
                                            ossmUpdateTimer = nullptr;
                                            fireStateMachineDoneEvent();
@@ -264,7 +271,89 @@ namespace actions {
         }
     };
 
-    inline auto checkOssmUpdate = []() { startOssmUpdateCheck(); };
+    // The OSSM dropped the link while installing: that is its reboot. Give
+    // it a few seconds, then go back to searching instead of waiting out the
+    // full dead-man timer.
+    inline auto startOssmRebootWait = []() {
+        if (ossmUpdateTimer != nullptr) {
+            xTimerDelete(ossmUpdateTimer, 0);
+        }
+        ossmUpdateTimer = xTimerCreate("ossmReboot", pdMS_TO_TICKS(5000),
+                                       pdFALSE, nullptr, [](TimerHandle_t) {
+                                           ossmUpdateTimer = nullptr;
+                                           fireStateMachineDoneEvent();
+                                       });
+        xTimerStart(ossmUpdateTimer, 0);
+    };
+
+    // --- Self-update outcome pages. BLE is down by now, so every exit is a
+    // restart: on a button, or after 10 s on its own.
+    inline auto drawUpdateFailed = []() {
+        clearPage();
+        createPsramTask(drawPageTask, "drawPageTask", 5 * configMINIMAL_STACK_SIZE,
+                        const_cast<TextPage *>(&updateFailedPage), 5, NULL, 1);
+        vTaskDelay(pdMS_TO_TICKS(150));
+        updateStatusText(updateFailureReason);
+    };
+
+    inline TimerHandle_t autoRestartTimer = nullptr;
+
+    inline auto startAutoRestart = []() {
+        if (autoRestartTimer != nullptr) xTimerDelete(autoRestartTimer, 0);
+        autoRestartTimer = xTimerCreate("autoRestart", pdMS_TO_TICKS(10000),
+                                        pdFALSE, nullptr, [](TimerHandle_t) {
+                                            autoRestartTimer = nullptr;
+                                            fireStateMachineDoneEvent();
+                                        });
+        xTimerStart(autoRestartTimer, 0);
+    };
+
+    inline auto cancelAutoRestart = []() {
+        if (autoRestartTimer != nullptr) {
+            xTimerDelete(autoRestartTimer, 0);
+            autoRestartTimer = nullptr;
+        }
+    };
+
+    // --- OSSM network jobs: the OSSM does the HTTPS work, we follow its
+    // state over BLE (see devices/researchAndDesire/ossm/ossm_state.h).
+    inline auto resetOssmObserved = []() { resetOssmObservedState(); };
+
+    inline auto startOssmUpdate = []() { startOssmUpdateRequest(); };
+
+    inline auto startOssmPairing = []() { startOssmPairingRequest(); };
+
+    inline auto drawOssmPairingCode = []() { drawOssmPairingCodeFromState(); };
+
+    inline auto drawOssmPairingFailed = []() {
+        drawOssmFailurePage(ossmPairingFailedPage);
+    };
+
+    inline auto drawOssmUpdateFailed = []() {
+        drawOssmFailurePage(ossmUpdateFailedPage);
+    };
+
+    // The request task itself could not be created (internal RAM exhausted
+    // on this remote, not on the OSSM).
+    inline constexpr const char *REMOTE_OUT_OF_MEMORY =
+        "This remote is out of memory. Restart it and try again.";
+    inline auto drawOssmUpdateOutOfMemory = []() {
+        drawOssmFailurePage(ossmUpdateFailedPage, REMOTE_OUT_OF_MEMORY);
+    };
+    inline auto drawOssmPairingOutOfMemory = []() {
+        drawOssmFailurePage(ossmPairingFailedPage, REMOTE_OUT_OF_MEMORY);
+    };
+
+    inline auto drawOssmUpdateAvailable = []() { drawOssmUpdateAvailableFromState(); };
+
+    inline auto sendOssmInstall = []() { confirmOssmInstall(); };
+
+    // Sends this remote's Wi-Fi credentials to the OSSM over BLE (no-op when
+    // the remote itself is offline or the OSSM already has Wi-Fi).
+    inline auto shareOssmWifi = []() {
+        if (device == nullptr) return;
+        device->onWiFiConnected();
+    };
 
     inline auto sendStrokeEngine = []() {
         if (device == nullptr) return;
@@ -368,6 +457,5 @@ namespace actions {
         espSilentRestart();
     };
 
-    inline auto checkOssmPairing = []() { startOssmPairingCheck(); };
 
 }  // namespace actions

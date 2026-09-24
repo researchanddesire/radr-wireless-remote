@@ -1,3 +1,4 @@
+#include "devices/researchAndDesire/ossm/ossm_state.h"
 #include "events.hpp"
 #include "services/encoder.h"
 #include "tasks/update.h"
@@ -23,6 +24,11 @@ const auto hasFilesystemUpdate =
 template <typename Event = done>
 const auto hasSoftwareUpdate =
     [](const Event &event) { return isSoftwareUpdateAvailable; };
+
+// The last self-update step stopped for a reason (see updateFailureReason).
+template <typename Event = done>
+const auto updateFailed =
+    [](const Event &event) { return !updateFailureReason.isEmpty(); };
 
 template <typename Event = right_button_pressed>
 const auto isOnline =
@@ -66,9 +72,36 @@ const auto isSimplePenetrationMode = []() -> bool {
     return device != nullptr && device->isInSimplePenetrationMode();
 };
 
-// Declared in ossmUpdate.cpp
-extern bool ossmUpdateIsAvailable;
+// --- OSSM network jobs (pairing / update run on the OSSM, observed over BLE)
 
-template <typename Event = done>
-const auto hasOssmUpdate =
-    [](const Event &event) { return ossmUpdateIsAvailable; };
+// The OSSM is in exactly this state (SML leaf name, e.g. "update.idle").
+template <typename Event = ossm_state_event>
+auto ossmInState = [](const char *state) {
+    return [state](const Event &event) -> bool {
+        const OssmObservedState observed = getOssmObservedState();
+        return observed.valid && observed.info.state == state;
+    };
+};
+
+// Pairing finished: the OSSM is in its pairing flow and reports isPaired.
+template <typename Event = ossm_state_event>
+const auto ossmPairingDone = [](const Event &event) -> bool {
+    const OssmObservedState observed = getOssmObservedState();
+    return observed.valid && observed.info.isPaired &&
+           ossmStateStartsWith(observed.info.state, "pairing");
+};
+
+// The OSSM gave up pairing and reported why.
+template <typename Event = ossm_state_event>
+const auto ossmPairingFailed = [](const Event &event) -> bool {
+    const OssmObservedState observed = getOssmObservedState();
+    return observed.valid && observed.info.state == "pairing.failed";
+};
+
+// The OSSM has a claim code to show.
+template <typename Event = ossm_state_event>
+const auto ossmPairingCodeReady = [](const Event &event) -> bool {
+    const OssmObservedState observed = getOssmObservedState();
+    return observed.valid && !observed.info.pairingCode.empty() &&
+           ossmStateStartsWith(observed.info.state, "pairing");
+};

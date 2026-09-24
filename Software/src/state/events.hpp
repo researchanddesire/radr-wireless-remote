@@ -48,3 +48,17 @@ struct wake_up_event : public base_event {};
 struct devices_found_event : public base_event {};
 
 struct device_selected_event : public base_event {};
+
+// The connected OSSM pushed a new state over BLE (see ossm_state.h).
+struct ossm_state_event : public base_event {};
+
+// The OSSM reported over BLE that it has no Wi-Fi, so it cannot run the
+// requested network job (pairing / update).
+struct ossm_no_wifi_event : public base_event {};
+
+// The OSSM did not react to a BLE-triggered network job: its firmware
+// predates go:pairing / go:update.
+struct ossm_unsupported_event : public base_event {};
+
+// A task the state machine needs could not be created (out of memory).
+struct task_failed_event : public base_event {};

@@ -9,6 +9,8 @@
 #include "components/AnimatedIcons.h"
 #include "constants.h"
 #include "esp_log.h"
+#include <esp_heap_caps.h>
+#include "pages/genericPages.h"
 #include "pins.h"
 #include "services/battery.h"
 #include "services/buzzer.h"
@@ -40,6 +42,31 @@ OneButton underRightBtn;
 // image. The Arduino core otherwise marks it valid before setup runs.
 extern "C" bool verifyRollbackLater() { return true; }
 #endif
+
+// Largest free internal-RAM block the RADR must still have once BLE is up.
+// Below this, internal-stack tasks (BLE connection, OTA) start failing to
+// spawn. The number comes from hardware measurements (RAD-2158); a release
+// that trips it must not be promoted. Override with -D RADR_MIN_LARGEST_BLOCK.
+#ifndef RADR_MIN_LARGEST_BLOCK
+#define RADR_MIN_LARGEST_BLOCK (24 * 1024)
+#endif
+
+static void logBootMemoryBudget() {
+    const size_t freeInternal =
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const size_t largestInternal =
+        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    // Error level so it shows in production logs and on the desk before a
+    // release is promoted.
+    ESP_LOGE("MEM", "boot after BLE init: internal free=%u largest=%u budget=%u %s",
+             (unsigned)freeInternal, (unsigned)largestInternal,
+             (unsigned)RADR_MIN_LARGEST_BLOCK,
+             largestInternal < RADR_MIN_LARGEST_BLOCK ? "LOW MEMORY" : "ok");
+    if (largestInternal < RADR_MIN_LARGEST_BLOCK) {
+        updateStatusText("LOW MEMORY: " + String((unsigned)(largestInternal / 1024)) +
+                         " KB largest block");
+    }
+}
 
 void setup() {
     configureSerialIdentityUsb();
@@ -102,6 +129,7 @@ void setup() {
     initIMUService();
     updateIMUReadings();
     initBLE();
+    logBootMemoryBudget();
     initStateMachine();
     initBattery();
     confirmRunningFirmware();

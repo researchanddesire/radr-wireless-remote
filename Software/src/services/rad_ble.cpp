@@ -201,11 +201,14 @@ bool returnToMainMenu() {
             state == "ossm_restart_confirm" ||
             state == "ossm_restarting" || state == "ossm_pairing" ||
             state == "ossm_pairing_success" ||
-            state == "ossm_pairing_wifi" ||
+            state == "ossm_pairing_wifi" || state == "ossm_pairing_code" ||
+            state == "ossm_pairing_failed" || state == "ossm_unsupported" ||
             state == "ossm_update_check" ||
-            state == "ossm_update_confirm" ||
+            state == "ossm_update_available" ||
             state == "ossm_update_updating" ||
-            state == "ossm_update_none" || state == "ossm_update_wifi" ||
+            state == "ossm_update_none" || state == "ossm_update_failed" ||
+            state == "ossm_update_wifi" || state == "update.uptodate" ||
+            state == "update.failed" ||
             state == "wmConfig" || state == "update.wifi") {
             accepted = stateMachine->process_event(left_button_pressed{});
         } else if (state == "device_menu") {
@@ -483,7 +486,9 @@ radble::Result handleCommand(JsonObjectConst request, void*) {
         if (xTaskCreate(requestNetworkOtaTask, "rad-net-ota", 2048, nullptr, 1,
                         nullptr) != pdPASS)
             return radble::Result::failure("busy", "Could not schedule network OTA");
-        return radble::Result::success(R"({"transport":"wifi","requested":true})");
+        // The RADR shuts BLE down for the network OTA and restarts afterwards.
+        return radble::Result::success(
+            R"({"transport":"wifi","requested":true,"willDisconnect":true})");
     }
 
     if (operation == "sensor.read" || operation == "setting.read") {

@@ -19,7 +19,11 @@ static const int BACKLIGHT_PWM_RESOLUTION = 8; // 8-bit resolution (0-255)
 static uint8_t currentBrightness = BRIGHTNESS_FULL;
 
 // Screen setup
-Adafruit_ST7789 tft = Adafruit_ST7789(&SPI, pins::TFT_CS, pins::TFT_DC, pins::TFT_RST);
+#ifdef VERSIONDEV
+CapturedDisplay tft(&SPI, pins::TFT_CS, pins::TFT_DC, pins::TFT_RST);
+#else
+Adafruit_ST7789 tft(&SPI, pins::TFT_CS, pins::TFT_DC, pins::TFT_RST);
+#endif
 
 // Create the display mutex
 SemaphoreHandle_t displayMutex = xSemaphoreCreateMutex();
@@ -41,10 +45,16 @@ bool initDisplay()
     SPI.setFrequency(40000000); // 40MHz
     tft.init(240, 320); // Initialize with screen dimensions
     tft.setRotation(1); // Landscape mode
+    #ifdef VERSIONDEV
+    tft.initCapture();
+    #endif
     tft.fillScreen(ST77XX_BLACK);
     tft.setTextColor(ST77XX_WHITE);
     tft.setTextSize(1);
 
+    #ifdef VERSIONDEV
+    startScreenCaptureConsole();
+    #endif
     return true;
 }
 

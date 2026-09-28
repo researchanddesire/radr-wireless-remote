@@ -2,12 +2,17 @@
 #define DISPLAY_H
 
 #include <Adafruit_ST7789.h>
+#include "capturedDisplay.h"
 #include "pins.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
 // Global TFT instance
+#ifdef VERSIONDEV
+extern CapturedDisplay tft;
+#else
 extern Adafruit_ST7789 tft;
+#endif
 
 // Display semaphore for thread-safe access
 extern SemaphoreHandle_t displayMutex;

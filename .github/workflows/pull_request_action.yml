@@ -93,7 +93,7 @@ jobs:
             Software/.pio/build/production/bootloader.bin
             Software/.pio/build/production/littlefs.bin
             Software/.pio/build/production/web-installer.bin
-          retention-days: 1
+          retention-days: 14
 
   check:
     needs: check_changes

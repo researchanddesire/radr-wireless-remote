@@ -140,6 +140,31 @@ freshness; do not commit generated reports.
    Actions), with strict up-to-date branches, for main and staging. Preserve all
    existing review/check/release rules. Never bypass failed or skipped devices.
 
+## Recovering an unavailable reviewed workflow
+
+GitHub resolves the reusable workflow before starting any jobs. If a run reports
+`workflow was not found` for the pinned `hardware-run.yml`, inspect that exact
+repository, file and commit first. Runner registration cannot fix a workflow that
+GitHub cannot load.
+
+Keep the reviewed wrapper commit reachable through a durable remote reference.
+RADR retains its reviewed commit on `codex/reviewed-hardware-runner`; preserve
+that reference when cleaning up merged implementation branches. The caller and
+runner group's selected-workflow entry must continue to use the reviewed full
+SHA, not the name of this branch or the current main commit. Restoring reachability
+does not authorize editing the wrapper or broadening the runner group.
+
+After restoring the exact commit, verify that its workflow file can be read at
+the pinned SHA and that the organization runner has this repository and workflow
+in its allowlist. An invalid-workflow run may have no jobs and GitHub may refuse
+to retry it. In that case, a fresh internal pull-request event is required; a
+docs-only PR still runs the complete build and hardware checks. For retryable
+runs, use **Re-run all jobs** so bundle names and manifests match the new attempt.
+
+Confirm that the new run reaches the reviewed workflow, consumes its own staging
+artifacts and records every enrolled device's full observation. An online worker,
+a resolved workflow or a successful build alone does not clear Hardware validation.
+
 ## Verification
 
 Run `python -m unittest discover -s scripts/hil -p 'test_*.py'` from the checkout.

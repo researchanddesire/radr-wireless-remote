@@ -1,0 +1,9 @@
+baudrate = 921600
+
+[flash]
+mode = "dio"
+size = "16MB"
+frequency = "80MHz"
+
+[idf]
+partition_table = "partitions.csv"

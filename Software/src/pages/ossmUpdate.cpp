@@ -1,33 +1,26 @@
 #include "ossmUpdate.h"
 
-#include <ArduinoJson.h>
-#include <HTTPClient.h>
 #include <devices/device.h>
+#include <esp_heap_caps.h>
+#include <pages/displayUtils.h>
 #include <pages/genericPages.h>
 
 #include "constants/Strings.h"
+#include "devices/researchAndDesire/ossm/ossm_state.h"
 #include "pages/TextPages.h"
-
-// Forward declaration — defined in remote.cpp
-extern void fireStateMachineDoneEvent();
-
-// Flag read by guard in state machine to determine transition
-bool ossmUpdateIsAvailable = false;
+// Defined in remote.cpp; keeps the state-machine headers (and their
+// header-static pages) out of this translation unit.
+void fireStateMachineOssmNoWifiEvent();
+void fireStateMachineOssmUnsupportedEvent();
+void fireStateMachineOssmLinkLostEvent();
+void fireStateMachineTaskFailedEvent();
+#include "utils/psramTask.h"
 
 // OSSM Update page definitions (extern-declared in TextPages.h)
 const TextPage ossmUpdateCheckPage = {
     .title = "Update OSSM",
     .description = "Checking for updates...",
     .leftButtonText = GO_BACK,
-};
-
-const TextPage ossmUpdateConfirmPage = {
-    .title = "Update Available",
-    .description =
-        "A firmware update is available for your OSSM. This will restart "
-        "the device.",
-    .leftButtonText = CANCEL_STRING,
-    .rightButtonText = "Update",
 };
 
 const TextPage ossmUpdateUpdatingPage = {
@@ -46,123 +39,132 @@ const TextPage ossmUpdateNonePage = {
 const TextPage ossmUpdateWifiPage = {
     .title = "WiFi Required",
     .description =
-        "Connect to WiFi first to check for OSSM updates.",
+        "Your OSSM needs WiFi to check for updates. Share this remote's "
+        "WiFi with it, then try again.",
+    .leftButtonText = GO_BACK,
+    .rightButtonText = "Share Wi-Fi",
+};
+
+const TextPage ossmUpdateFailedPage = {
+    .title = "Update Failed",
+    .description = "",
     .leftButtonText = GO_BACK,
 };
 
+const TextPage ossmUpdateAvailablePage = {
+    .title = "Update Available",
+    .description = "",
+    .leftButtonText = CANCEL_STRING,
+    .rightButtonText = "Update",
+};
+
 static const char *UPDATE_TAG = "OSSM_UPDATE";
+static constexpr uint32_t OSSM_RESPONSE_TIMEOUT_MS = 10000;
+static constexpr uint32_t OSSM_POLL_INTERVAL_MS = 400;
 
-// Parse a semicolon-delimited string and return the field at the given index.
-// Returns empty string if the index is out of range.
-static String getField(const std::string &data, int fieldIndex) {
-    int currentField = 0;
-    size_t fieldStart = 0;
-
-    for (size_t i = 0; i <= data.size(); i++) {
-        if (i == data.size() || data[i] == ';') {
-            if (currentField == fieldIndex) {
-                return String(data.substr(fieldStart, i - fieldStart).c_str());
-            }
-            currentField++;
-            fieldStart = i + 1;
-        }
-    }
-
-    return "";
-}
-
-static void ossmUpdateCheckTask(void *pvParameters) {
-    ossmUpdateIsAvailable = false;
-
-    // Guard: device still connected
-    if (device == nullptr || !device->isConnected) {
-        ESP_LOGW(UPDATE_TAG, "No device connected");
-        updateStatusText("No device connected.");
-        vTaskDelete(nullptr);
-        return;
-    }
-
-    // Read pairing characteristic: "MAC;chipModel;wifiConnected;md5;version;efuseMacHex"
+// Reads the OSSM pairing characteristic; empty on any failure.
+static std::string readOssmPairingInfo() {
+    if (device == nullptr || !device->isConnected) return "";
     auto it = device->characteristics.find("pairing");
     if (it == device->characteristics.end() ||
         it->second.pCharacteristic == nullptr) {
-        ESP_LOGW(UPDATE_TAG, "Pairing characteristic not found");
-        updateStatusText("Could not read device info.");
-        vTaskDelete(nullptr);
-        return;
+        return "";
     }
-
-    NimBLERemoteCharacteristic *pairingChar = it->second.pCharacteristic;
-    std::string pairingInfo;
     try {
-        pairingInfo = pairingChar->readValue();
+        return it->second.pCharacteristic->readValue();
     } catch (...) {
-        ESP_LOGW(UPDATE_TAG, "BLE read failed");
-        updateStatusText("Could not read device info.");
-        vTaskDelete(nullptr);
-        return;
+        return "";
     }
+}
 
+// Follows the OSSM's state characteristic by polling while this page's
+// follow generation is current and the OSSM stays connected. The first
+// OSSM_RESPONSE_TIMEOUT_MS decide whether the OSSM entered the requested flow
+// (state prefix); if it never does, its firmware predates the command.
+static const char *const TERMINAL_STATES[] = {"update.failed", "update.idle"};
+
+static void followOssmFlow(const char *prefix) {
+    const uint32_t generation = ossmFollowGeneration();
+    const uint32_t responseDeadline = millis() + OSSM_RESPONSE_TIMEOUT_MS;
+    bool entered = false;
+    while (ossmFollowGeneration() == generation && device != nullptr &&
+           device->isConnected) {
+        const std::string json = device->readRawState();
+        if (!json.empty()) ingestOssmStateJson(json.c_str(), json.size());
+        {
+            const OssmObservedState observed = getOssmObservedState();
+            if (observed.valid) {
+                for (const char *terminal : TERMINAL_STATES) {
+                    if (observed.info.state == terminal) return;
+                }
+            }
+        }
+        if (!entered) {
+            const OssmObservedState observed = getOssmObservedState();
+            if (observed.valid && ossmStateStartsWith(observed.info.state, prefix)) {
+                entered = true;
+            } else if ((int32_t)(responseDeadline - millis()) <= 0) {
+                fireStateMachineOssmUnsupportedEvent();
+                return;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(OSSM_POLL_INTERVAL_MS));
+    }
+}
+
+static void ossmUpdateTask(void *) {
+    ESP_LOGW(UPDATE_TAG, "[MEM] request: internal free=%u largest=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
+                                                        MALLOC_CAP_8BIT));
+    const std::string pairingInfo = readOssmPairingInfo();
     if (pairingInfo.empty()) {
-        ESP_LOGW(UPDATE_TAG, "Empty pairing info");
-        updateStatusText("Could not read device info.");
+        ESP_LOGW(UPDATE_TAG, "Could not read OSSM pairing info");
+        // A failed read on a "connected" OSSM means the link is dead (the
+        // OSSM rebooted or crashed mid-connect and the disconnect callback
+        // never fired). Treat it as a disconnect so the RADR cleans up.
+        updateStatusText("Lost the OSSM connection.");
+        fireStateMachineOssmLinkLostEvent();
         vTaskDelete(nullptr);
         return;
     }
 
-    ESP_LOGI(UPDATE_TAG, "Pairing info: %s", pairingInfo.c_str());
-
-    String version = getField(pairingInfo, 4);
-    if (version.isEmpty()) {
-        ESP_LOGW(UPDATE_TAG, "Could not parse version from pairing info");
-        updateStatusText("Could not determine OSSM version.");
+    if (!pairingInfoHasWifi(pairingInfo)) {
+        fireStateMachineOssmNoWifiEvent();
         vTaskDelete(nullptr);
         return;
     }
 
-    ESP_LOGI(UPDATE_TAG, "OSSM version: %s", version.c_str());
-
-    // Check CloudFront for available update
-    HTTPClient http;
-    http.begin("http://d2g4f7zewm360.cloudfront.net/check-for-ossm-update");
-    http.addHeader("Content-Type", "application/json");
-
-    JsonDocument doc;
-    doc["ossmSwVersion"] = version;
-    String body;
-    serializeJson(doc, body);
-
-    int httpCode = http.POST(body);
-    if (httpCode != 200) {
-        ESP_LOGW(UPDATE_TAG, "Update check failed with HTTP %d", httpCode);
-        http.end();
-        updateStatusText("Could not check for updates.");
-        vTaskDelete(nullptr);
-        return;
-    }
-
-    String payload = http.getString();
-    http.end();
-
-    JsonDocument resp;
-    DeserializationError err = deserializeJson(resp, payload);
-    if (err) {
-        ESP_LOGW(UPDATE_TAG, "JSON parse error: %s", err.c_str());
-        updateStatusText("Invalid server response.");
-        vTaskDelete(nullptr);
-        return;
-    }
-
-    bool needUpdate = resp["response"]["needUpdate"].as<bool>();
-    ESP_LOGI(UPDATE_TAG, "Update check result: needUpdate=%d", needUpdate);
-
-    ossmUpdateIsAvailable = needUpdate;
-    fireStateMachineDoneEvent();
+    if (device != nullptr) device->onUpdate();
+    followOssmFlow("update");
     vTaskDelete(nullptr);
 }
 
-void startOssmUpdateCheck() {
-    xTaskCreatePinnedToCore(ossmUpdateCheckTask, "ossmUpdateCheck",
-                            20 * configMINIMAL_STACK_SIZE, nullptr, 1, nullptr,
-                            1);
+void startOssmUpdateRequest() {
+    if (createInternalTask(ossmUpdateTask, "ossmUpdateTask",
+                           8 * configMINIMAL_STACK_SIZE, nullptr, 1, nullptr,
+                           1) != pdPASS) {
+        // task_failed_event -> ossm_update_failed with the out-of-memory reason
+        fireStateMachineTaskFailedEvent();
+    }
+}
+
+void drawOssmUpdateAvailableFromState() {
+    const OssmObservedState observed = getOssmObservedState();
+    clearPage();
+    createPsramTask(drawPageTask, "drawPageTask", 5 * configMINIMAL_STACK_SIZE,
+                    const_cast<TextPage *>(&ossmUpdateAvailablePage), 5, NULL, 1);
+    vTaskDelay(pdMS_TO_TICKS(150));
+    String text = "A firmware update";
+    if (!observed.info.targetVersion.empty()) {
+        text += " (";
+        text += observed.info.targetVersion.c_str();
+        text += ")";
+    }
+    text += " is available for your OSSM. This will restart the device.";
+    updateStatusText(text);
+}
+
+void confirmOssmInstall() {
+    if (device != nullptr) device->onUpdate();  // OSSM treats it as the confirmation
 }

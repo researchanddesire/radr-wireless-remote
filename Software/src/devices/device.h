@@ -73,6 +73,8 @@ class Device : public NimBLEClientCallbacks {
     virtual void onDeviceMenuItemSelected(int index) {}
     virtual void onRestart() {}
     virtual void onUpdate() {}
+    virtual void onPairing() {}
+    virtual std::string readRawState() { return ""; }
     virtual void onMenuOpen() {}
     virtual void enterStrokeEngineMode() {}
     virtual void enterSimplePenetrationMode() {}

@@ -6,8 +6,11 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 
+#include <esp_heap_caps.h>
+
 #include "FirmwareUpdateRuntime.h"
 #include "constants/Version.h"
+#include "services/ble_lifecycle.h"
 #include "state/remote.h"
 
 #ifndef FIRMWARE_BUILD_SHA
@@ -16,6 +19,13 @@
 
 #ifndef FIRMWARE_TRACK
 #define FIRMWARE_TRACK "main"
+#endif
+
+// Largest free internal block the HTTPS check needs once BLE is down.
+// Measured 2026-09-08: 32,756 B largest / 127 KB free -> check succeeds.
+// Override with -D RADR_OTA_MIN_LARGEST_BLOCK.
+#ifndef RADR_OTA_MIN_LARGEST_BLOCK
+#define RADR_OTA_MIN_LARGEST_BLOCK (28 * 1024)
 #endif
 
 namespace {
@@ -125,6 +135,7 @@ TaskHandle_t updateSoftwareTaskHandle = nullptr;
 
 bool isSoftwareUpdateAvailable = false;
 bool isFilesystemUpdateAvailable = false;
+String updateFailureReason;
 
 bool confirmRunningFirmware() {
     const esp_partition_t *running = esp_ota_get_running_partition();
@@ -153,13 +164,17 @@ bool confirmRunningFirmware() {
 }
 
 bool isUpdateAvailable() {
-    if (WiFi.status() != WL_CONNECTED) return false;
+    if (WiFi.status() != WL_CONNECTED) {
+        updateFailureReason = "Wi-Fi is not connected.";
+        return false;
+    }
 
     firmware::Decision decision;
     String error;
     const auto report = makeDeviceReport();
     if (!firmware::postCheck(RAD_SERVER, report, decision, error)) {
         ESP_LOGE(UPDATE_TAG, "Firmware resolver failed: %s", error.c_str());
+        updateFailureReason = "Could not reach the update server.";
         return false;
     }
     firmware::provenance::observeCurrent(report, decision);
@@ -169,9 +184,10 @@ bool isUpdateAvailable() {
              decision.assignedTrack.c_str(),
              decision.shouldUpdate ? "true" : "false",
              decision.targetVersion.c_str(), decision.nextHopVersion.c_str());
-    if (!decision.shouldUpdate) return false;
+    if (!decision.shouldUpdate) return false;  // up to date, no reason
     if (!validateInstallPlan(decision, error)) {
         ESP_LOGE(UPDATE_TAG, "Invalid install plan: %s", error.c_str());
+        updateFailureReason = "The update server sent an invalid plan.";
         return false;
     }
 
@@ -182,10 +198,27 @@ bool isUpdateAvailable() {
     return isSoftwareUpdateAvailable;
 }
 
+// The whole self-update runs with BLE torn down: NimBLE plus the RAD BLE
+// service leave far too little contiguous internal RAM for a TLS handshake.
+// Every exit of the update flow ends in a restart, which brings BLE back.
 void updateTask(void *pvParameters) {
     isFilesystemUpdateAvailable = false;
     isSoftwareUpdateAvailable = false;
     decisionReady = false;
+    updateFailureReason = "";
+
+    const BleShutdownResult ble = shutdownBleForNetwork();
+    if (!ble.deinitOk || ble.largestInternal < RADR_OTA_MIN_LARGEST_BLOCK) {
+        ESP_LOGE(UPDATE_TAG,
+                 "Not enough memory for the update check after BLE shutdown: "
+                 "largest=%u need=%u deinit=%d",
+                 (unsigned)ble.largestInternal,
+                 (unsigned)RADR_OTA_MIN_LARGEST_BLOCK, ble.deinitOk ? 1 : 0);
+        updateFailureReason = "Not enough memory to check for updates.";
+        finishTask();
+        return;
+    }
+
     isUpdateAvailable();
     finishTask();
 }
@@ -194,7 +227,9 @@ void updateFilesystemTask(void *pvParameters) {
     const firmware::Artifact *artifact = artifactForRole("filesystem");
     if (WiFi.status() != WL_CONNECTED || artifact == nullptr) {
         ESP_LOGE(UPDATE_TAG, "Filesystem update is no longer available");
+        updateFailureReason = "The filesystem update is no longer available.";
         isFilesystemUpdateAvailable = false;
+        isSoftwareUpdateAvailable = false;
         finishTask();
         return;
     }
@@ -208,6 +243,7 @@ void updateFilesystemTask(void *pvParameters) {
     }
     if (!installed) {
         ESP_LOGE(UPDATE_TAG, "Filesystem update failed: %s", error.c_str());
+        updateFailureReason = "The filesystem update failed to install.";
         // Do not install the application when the ordered filesystem step did
         // not verify. The existing bootable application remains selected.
         isSoftwareUpdateAvailable = false;
@@ -220,6 +256,7 @@ void updateSoftwareTask(void *pvParameters) {
     const firmware::Artifact *artifact = artifactForRole("application");
     if (WiFi.status() != WL_CONNECTED || artifact == nullptr) {
         ESP_LOGE(UPDATE_TAG, "Application update is no longer available");
+        updateFailureReason = "The application update is no longer available.";
         isSoftwareUpdateAvailable = false;
         finishTask();
         return;
@@ -228,6 +265,7 @@ void updateSoftwareTask(void *pvParameters) {
     String error;
     if (!firmware::installStreamedArtifact(*artifact, U_FLASH, error)) {
         ESP_LOGE(UPDATE_TAG, "Application update failed: %s", error.c_str());
+        updateFailureReason = "The application update failed to install.";
         isSoftwareUpdateAvailable = false;
         finishTask();
         return;

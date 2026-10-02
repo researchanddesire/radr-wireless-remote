@@ -50,6 +50,11 @@ jobs:
       - name: Install PlatformIO Core
         run: pip install platformio==6.1.19
 
+      - name: Run native unit tests
+        run: |
+          cd Software
+          pio test -e test_native
+
       - name: Build PlatformIO Project
         run: |
           cd Software

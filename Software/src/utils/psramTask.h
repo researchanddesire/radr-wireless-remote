@@ -48,6 +48,31 @@ inline BaseType_t createPsramTask(TaskFunction_t task, const char *name,
     return result;
 }
 
+// Internal-RAM task creation that never fails silently: logs the stack size
+// and the internal heap state when the task cannot be created, and nulls the
+// handle. Use this instead of a bare xTaskCreatePinnedToCore for every task
+// whose stack must stay in internal RAM (anything touching flash or TLS).
+inline BaseType_t createInternalTask(TaskFunction_t task, const char *name,
+                                     uint32_t stackBytes, void *param,
+                                     UBaseType_t priority, TaskHandle_t *handle,
+                                     BaseType_t core) {
+    const BaseType_t result = xTaskCreatePinnedToCore(task, name, stackBytes,
+                                                      param, priority, handle,
+                                                      core);
+    if (result != pdPASS) {
+        ESP_LOGE("TASK",
+                 "Could not create task %s (%u byte stack): internal free=%u "
+                 "largest=%u",
+                 name, (unsigned)stackBytes,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                                   MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(
+                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        if (handle != nullptr) *handle = nullptr;
+    }
+    return result;
+}
+
 // True when the task's stack was allocated by xTaskCreate*WithCaps (which
 // creates a statically-allocated task around caller-provided buffers).
 inline bool isPsramTask(TaskHandle_t handle) {

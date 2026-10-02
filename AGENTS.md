@@ -18,6 +18,12 @@
 - Staging firmware reports the `staging` track and checks `https://staging.researchanddesire.com`. Main firmware reports `main` and checks `https://dashboard.researchanddesire.com`.
 - Firmware is update-eligible only after its immutable Supabase artifacts and all required validation records verify. Missing hardware runners leave a release in `validating`; never bypass a gate.
 
+## Memory Rules (RAD-2158)
+
+- The RADR never opens a TLS socket while NimBLE is initialised. NimBLE plus the RAD BLE service cost ~100 KB of internal RAM at boot and a TLS handshake needs ~50 KB in one block; the largest free block with BLE up is ~24 KB. Network jobs about the OSSM (pairing, update) run on the OSSM over a BLE trigger; the RADR's own OTA tears BLE down first.
+- Every task on an internal-RAM stack is created through `createInternalTask` (or `startTask`) so an out-of-memory condition logs the heap state and shows on screen. Never call `xTaskCreate*` bare and drop the result.
+- Boot logs `[MEM] boot after BLE init: ... largest=...` at error level. A release whose largest block is below `RADR_MIN_LARGEST_BLOCK` (24 KB; measured 31.7 KB at boot on 2026-09-08) on the desk unit must not be promoted; record the number in the release PR.
+
 ## Development Safety
 
 - Keep stable eFuse identity, update protocol, filesystem/application ordering, and rollback behavior covered by native tests.

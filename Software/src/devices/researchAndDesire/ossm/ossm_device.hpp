@@ -14,6 +14,7 @@
 #include <structs/SettingPercents.h>
 
 #include "../../device.h"
+#include "ossm_state.h"
 #include "state/remote.h"
 
 #define OSSM_CHARACTERISTIC_UUID_COMMAND "522B443A-4F53-534D-1000-420BADBABE69"
@@ -341,12 +342,9 @@ class OSSM : public Device {
         do {
             send("command", "go:menu");
             vTaskDelay(100 / portTICK_PERIOD_MS);
-            readJson<String>("state", [this, &isInMenu](const String &state) {
-                String currentState;
-                stateMachine->visit_current_states([&currentState](auto state) {
-                    currentState = state.c_str();
-                });
-                isInMenu = currentState.startsWith("menu");
+            readJson<JsonObject>("state", [&isInMenu](const JsonObject &state) {
+                const char *ossmState = state["state"] | "";
+                isInMenu = strncmp(ossmState, "menu", 4) == 0;
             });
             vTaskDelay(100 / portTICK_PERIOD_MS);
         } while (isConnected && !isInMenu);
@@ -362,6 +360,11 @@ class OSSM : public Device {
     void onRestart() override { send("command", "go:restart"); }
 
     void onUpdate() override { send("command", "go:update"); }
+
+    void onPairing() override { send("command", "go:pairing"); }
+
+    // Full state JSON via a long read (notifications are MTU-truncated).
+    std::string readRawState() override { return readString("state"); }
 
     void enterStrokeEngineMode() override {
         operationMode = OssmMode::StrokeEngine;

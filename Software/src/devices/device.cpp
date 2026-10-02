@@ -1,5 +1,7 @@
 #include "device.h"
 
+#include "utils/psramTask.h"
+
 #include <services/buzzer.h>
 
 #include "pages/genericPages.h"
@@ -162,6 +164,14 @@ void Device::connectionTask(void *pvParameter) {
                              advDevice->getAddress().toString().c_str() +
                              "...");
             vTaskDelay(11);
+            // exchangeMTU stays false on purpose. NimBLE-Arduino 2.4.0's
+            // client read callback copies OS_MBUF_PKTLEN bytes from the first
+            // mbuf block only (NimBLERemoteValueAttribute.cpp onReadCB), so
+            // with a negotiated MTU any single response larger than one
+            // block (~250 B, e.g. the OSSM state JSON) comes back with a
+            // garbage tail (measured 2026-09-11: every read truncated at
+            // 279 B). At MTU 23 every response is a small blob and long
+            // reads are reassembled correctly.
             if (!pClient->connect(advDevice, true, false, false)) {
                 updateStatusText("Connection failed, please try again.");
                 /** Created a client but failed to connect, don't need to keep
@@ -251,9 +261,14 @@ void Device::connectionTask(void *pvParameter) {
 }
 
 void Device::startConnectionTask() {
-    xTaskCreatePinnedToCore(Device::connectionTask, "connectionTask",
-                            10 * configMINIMAL_STACK_SIZE, this, 1,
-                            &connectionTaskHandle, 0);
+    if (createInternalTask(Device::connectionTask, "connectionTask",
+                           10 * configMINIMAL_STACK_SIZE, this, 1,
+                           &connectionTaskHandle, 0) != pdPASS) {
+        updateStatusText("Out of memory: cannot connect.");
+        if (stateMachine) {
+            stateMachine->process_event(connected_error_event());
+        }
+    }
 }
 
 void Device::onConnect(NimBLEClient *pClient) {

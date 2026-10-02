@@ -15,6 +15,20 @@
 
 // OSSM page definitions (extern-declared in TextPages.h to avoid 11x static
 // duplication across translation units)
+const TextPage updateUpToDatePage = {
+    .title = "Up to Date",
+    .description = "This remote is running the latest firmware. Restarting...",
+    .leftButtonText = "Restart",
+    .rightButtonText = "Restart",
+};
+
+const TextPage updateFailedPage = {
+    .title = "Update Failed",
+    .description = "",
+    .leftButtonText = "Restart",
+    .rightButtonText = "Restart",
+};
+
 const TextPage ossmHelpPage = {
     .title = "OSSM Help",
     .description = "Scan for guides\nand troubleshooting",

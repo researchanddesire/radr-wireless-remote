@@ -31,11 +31,6 @@ static const TextPage updateSoftwarePage = {
     .leftButtonText = CANCEL_STRING,
 };
 
-static const TextPage updateDonePage = {
-    .title = "Update Complete",
-    .description = "Update complete!",
-    .leftButtonText = CANCEL_STRING,
-};
 
 static const TextPage deviceSearchPage = {
     .title = DEVICE_SEARCH_TITLE,
@@ -65,6 +60,10 @@ static const TextPage wifiConnectedPage = {
     .description = WIFI_CONNECTED_DESCRIPTION,
     .leftButtonText = GO_BACK};
 
+// Self-update result pages (defined in genericPages.cpp)
+extern const TextPage updateUpToDatePage;
+extern const TextPage updateFailedPage;
+
 // OSSM Pages (defined in genericPages.cpp — extern to avoid 11x static duplication)
 extern const TextPage ossmHelpPage;
 extern const TextPage ossmRestartConfirmPage;
@@ -75,12 +74,18 @@ extern const TextPage streamingPage;
 extern const TextPage ossmPairingConnectingPage;
 extern const TextPage ossmPairingSuccessPage;
 extern const TextPage ossmPairingWifiPage;
+extern const TextPage ossmPairingFailedPage;
+
+// Shown when the OSSM firmware predates BLE-triggered pairing/update
+// (defined in pairing.cpp)
+extern const TextPage ossmUnsupportedPage;
 
 // OSSM Update Pages (defined in ossmUpdate.cpp)
 extern const TextPage ossmUpdateCheckPage;
-extern const TextPage ossmUpdateConfirmPage;
 extern const TextPage ossmUpdateUpdatingPage;
 extern const TextPage ossmUpdateNonePage;
 extern const TextPage ossmUpdateWifiPage;
+extern const TextPage ossmUpdateFailedPage;
+extern const TextPage ossmUpdateAvailablePage;
 
 #endif  // TEXT_PAGES_H
